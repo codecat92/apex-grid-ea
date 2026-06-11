@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.02"
+#property version   "1.03"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -16,7 +16,7 @@ extern double StartLot          = 0.10;   // Lot pertama setiap grid
 extern double Multiplier        = 1.5;    // Pengali lot tiap level
 extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 200;    // TP keseluruhan (pips)
-extern int    OrdersPerStep     = 2;      // Jumlah order per level
+extern int    OrdersPerStep     = 1;      // Jumlah order per level
 
 //+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL PARAMETERS                                       |
@@ -88,6 +88,10 @@ double   G_BuyPeak         = 0;
 double   G_SellTrough      = 0;
 bool     G_BuyTrailing     = false;
 bool     G_SellTrailing    = false;
+double   G_BuyPeakProfit    = 0;
+double   G_SellPeakProfit   = 0;
+datetime G_BuyLastClosed    = 0;
+datetime G_SellLastClosed   = 0;
 
 //+------------------------------------------------------------------+
 //| RISK STATE                                                       |
@@ -215,28 +219,64 @@ double SideProfit(string side) {
       if (StringFind(OrderComment(), prefix) != 0) continue;
       p += OrderProfit() + OrderSwap() + OrderCommission();
    }
-   return p;
+    return p;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot-weighted average entry price for a side            |
+//+------------------------------------------------------------------+
+double BasketAvgPrice(string side) {
+   double totalLots = 0, weightedPrice = 0;
+   string prefix = G_Name + " " + side;
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if (OrderMagicNumber() != G_Magic) continue;
+      if (OrderSymbol() != Symbol()) continue;
+      if (StringFind(OrderComment(), prefix) != 0) continue;
+      weightedPrice += OrderOpenPrice() * OrderLots();
+      totalLots     += OrderLots();
+   }
+   return (totalLots > 0) ? (weightedPrice / totalLots) : 0;
+}
+
+//+------------------------------------------------------------------+
+//| Get total lots for one side                                      |
+//+------------------------------------------------------------------+
+double TotalSideLots(string side) {
+   double lots = 0;
+   string prefix = G_Name + " " + side;
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if (OrderMagicNumber() != G_Magic) continue;
+      if (OrderSymbol() != Symbol()) continue;
+      if (StringFind(OrderComment(), prefix) != 0) continue;
+      lots += OrderLots();
+   }
+   return lots;
 }
 
 //+------------------------------------------------------------------+
 //| GRID MANAGER (Layer 2)                                           |
-//| Open a full grid level (OrdersPerStep orders)                    |
+//| Level 0 = market order (instant entry)                           |
+//| Level > 0 = pending stop order at exact grid level               |
 //+------------------------------------------------------------------+
 void OpenGridLevel(string side) {
    int level;
    int cmd, slip = 3;
-   double sl, tp;
+   bool isPending;
 
    if (side == "BUY") {
       G_BuyActive = true;
       G_BuyLevel++;
       level = G_BuyLevel;
-      cmd = OP_BUY;
+      isPending = (level > 0);
+      cmd = isPending ? OP_BUYSTOP : OP_BUY;
    } else {
       G_SellActive = true;
       G_SellLevel++;
       level = G_SellLevel;
-      cmd = OP_SELL;
+      isPending = (level > 0);
+      cmd = isPending ? OP_SELLSTOP : OP_SELL;
    }
 
    double lot = LotByLevel(level);
@@ -245,34 +285,64 @@ void OpenGridLevel(string side) {
    if (level == 0) {
       if (!RefreshRates()) {
          Print(G_Name + " RefreshRates failed at level 0");
-         if (side == "BUY") { G_BuyActive = false; G_BuyLevel = -1; }
-         else               { G_SellActive = false; G_SellLevel = -1; }
+         if (side == "BUY") { G_BuyActive = false; G_BuyLevel = -1; G_BuyPeakProfit = 0; }
+         else               { G_SellActive = false; G_SellLevel = -1; G_SellPeakProfit = 0; }
          return;
       }
       if (side == "BUY") {
          G_BuyFirstPrice = Ask;
          G_BuyPeak       = Ask;
+         G_BuyPeakProfit = 0;
       } else {
          G_SellFirstPrice = Bid;
          G_SellTrough     = Bid;
+         G_SellPeakProfit = 0;
       }
    }
 
-   sl = 0;
-   tp = 0;
+   // Calculate entry price for pending orders (levels > 0)
+   double pendingPrice = 0;
+   if (isPending) {
+      double stepPips = CurrentGridStep() * PipSize();
+      if (side == "BUY") {
+         double lowest = LowestBuyPrice();
+         if (lowest == 0) lowest = G_BuyFirstPrice;
+         pendingPrice = lowest - stepPips;
+      } else {
+         double highest = HighestSellPrice();
+         if (highest == 0) highest = G_SellFirstPrice;
+         pendingPrice = highest + stepPips;
+      }
+      // Ensure pending price is valid vs current market
+      RefreshRates();
+      double stoplevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * PipSize();
+      if (side == "BUY" && pendingPrice >= Ask - stoplevel) pendingPrice = Ask - stoplevel;
+      if (side == "SELL" && pendingPrice <= Bid + stoplevel) pendingPrice = Bid + stoplevel;
+   }
+
+   Print(G_Name + " Grid ", side, " level ", level, " lot=", lot, " pending=", isPending);
 
    bool anySucceeded = false;
    for (int j = 0; j < OrdersPerStep; j++) {
-      if (!RefreshRates()) {
-         Print(G_Name + " RefreshRates failed at level ", level);
-         continue;
-      }
-      double price = (side == "BUY") ? Ask : Bid;
-      int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, tp, cmt, G_Magic, 0, CLR_NONE);
+      RefreshRates();
+      double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
+      int ticket = OrderSend(Symbol(), cmd, lot, price, slip, 0, 0, cmt, G_Magic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
+         Print(G_Name + " Order opened ticket=", ticket);
       } else {
-         Print(G_Name + " OrderSend error ", GetLastError(), " side=", side, " level=", level);
+         int err = GetLastError();
+         if (isPending && (err == 130)) {
+            // ERR_INVALID_STOPS — price too close to market, fallback to market order
+            RefreshRates();
+            double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
+            ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
+                               lot, mktPrice, slip, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+            if (ticket >= 0) anySucceeded = true;
+            else Print(G_Name + " Market fallback error ", GetLastError(), " side=", side, " level=", level);
+         } else {
+            Print(G_Name + " OrderSend error ", err, " side=", side, " level=", level);
+         }
       }
    }
 
@@ -280,20 +350,16 @@ void OpenGridLevel(string side) {
       if (side == "BUY") {
          G_BuyLevel--;
          if (G_BuyLevel < 0) {
-            G_BuyActive = false;
-            G_BuyLevel = -1;
-            G_BuyFirstPrice = 0;
-            G_BuyPeak = 0;
-            G_BuyTrailing = false;
+            G_BuyActive = false; G_BuyLevel = -1;
+            G_BuyFirstPrice = 0; G_BuyPeak = 0;
+            G_BuyPeakProfit = 0; G_BuyTrailing = false;
          }
       } else {
          G_SellLevel--;
          if (G_SellLevel < 0) {
-            G_SellActive = false;
-            G_SellLevel = -1;
-            G_SellFirstPrice = 0;
-            G_SellTrough = 0;
-            G_SellTrailing = false;
+            G_SellActive = false; G_SellLevel = -1;
+            G_SellFirstPrice = 0; G_SellTrough = 0;
+            G_SellPeakProfit = 0; G_SellTrailing = false;
          }
       }
    }
@@ -345,41 +411,52 @@ void BasketClose(string side) {
       return;
    }
 
+   Print(G_Name + " TRAL:::: close on the trawl ", side);
+
    if (side == "BUY") {
-      G_BuyActive    = false;
-      G_BuyLevel     = -1;
-      G_BuyFirstPrice= 0;
-      G_BuyPeak      = 0;
-      G_BuyTrailing  = false;
+      G_BuyActive     = false;
+      G_BuyLevel      = -1;
+      G_BuyFirstPrice = 0;
+      G_BuyPeak       = 0;
+      G_BuyPeakProfit = 0;
+      G_BuyTrailing   = false;
+      G_BuyLastClosed = TimeCurrent();
    } else {
-      G_SellActive    = false;
-      G_SellLevel     = -1;
-      G_SellFirstPrice= 0;
-      G_SellTrough    = 0;
-      G_SellTrailing  = false;
+      G_SellActive     = false;
+      G_SellLevel      = -1;
+      G_SellFirstPrice = 0;
+      G_SellTrough     = 0;
+      G_SellPeakProfit = 0;
+      G_SellTrailing   = false;
+      G_SellLastClosed = TimeCurrent();
    }
 }
 
 //+------------------------------------------------------------------+
 //| TRAILING STOP (Layer 3)                                          |
-//| Trailing aktif setelah harga bergerak TriggerDistance dari entry |
-//| pertama. Basket close jika harga pullback FixedDistance.         |
+//| Trailing on basket profit peak — "close on the trawl"            |
+//| Triggered after TriggerDistance pips from first entry.           |
+//| Closes when basket profit drops FixedDistance pips of value.     |
 //+------------------------------------------------------------------+
 void CheckTrailing() {
    if (!UseTrailingStop) return;
 
-   double pip = PipSize();
+   double pip    = PipSize();
+   double pipVal = pip * MarketInfo(Symbol(), MODE_TICKVALUE) / MarketInfo(Symbol(), MODE_TICKSIZE);
 
    // --- BUY trailing ---
    if (G_BuyActive) {
-      double dist = (Bid - G_BuyFirstPrice) / pip;
+      double dist   = (Bid - G_BuyFirstPrice) / pip;
+      double profit = SideProfit("BUY");
       if (dist >= TriggerDistance) {
          G_BuyTrailing = true;
       }
       if (G_BuyTrailing) {
-         if (Bid > G_BuyPeak) G_BuyPeak = Bid;
-         double pullback = (G_BuyPeak - Bid) / pip;
-         if (pullback >= FixedDistance) {
+         if (profit > G_BuyPeakProfit) G_BuyPeakProfit = profit;
+         double drop      = G_BuyPeakProfit - profit;
+         double threshold = FixedDistance * pipVal * TotalSideLots("BUY");
+         if (drop >= threshold && drop > 0) {
+            Print(G_Name + " TRAL:::: close on the trawl BUY");
             BasketClose("BUY");
          }
       }
@@ -387,14 +464,17 @@ void CheckTrailing() {
 
    // --- SELL trailing ---
    if (G_SellActive) {
-      double dist = (G_SellFirstPrice - Ask) / pip;
+      double dist   = (G_SellFirstPrice - Ask) / pip;
+      double profit = SideProfit("SELL");
       if (dist >= TriggerDistance) {
          G_SellTrailing = true;
       }
       if (G_SellTrailing) {
-         if (Ask < G_SellTrough) G_SellTrough = Ask;
-         double pullback = (Ask - G_SellTrough) / pip;
-         if (pullback >= FixedDistance) {
+         if (profit > G_SellPeakProfit) G_SellPeakProfit = profit;
+         double drop      = G_SellPeakProfit - profit;
+         double threshold = FixedDistance * pipVal * TotalSideLots("SELL");
+         if (drop >= threshold && drop > 0) {
+            Print(G_Name + " TRAL:::: close on the trawl SELL");
             BasketClose("SELL");
          }
       }
@@ -428,8 +508,42 @@ void CheckGridLevels() {
 }
 
 //+------------------------------------------------------------------+
+//| MANAGE PENDING ORDERS                                            |
+//| Gap-fill: if price passed a pending stop order without filling,  |
+//| delete it and place a market order instead.                      |
+//+------------------------------------------------------------------+
+void ManagePendingOrders() {
+   double pip = PipSize();
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if (OrderMagicNumber() != G_Magic) continue;
+      if (OrderSymbol() != Symbol()) continue;
+      if (OrderType() != OP_BUYSTOP && OrderType() != OP_SELLSTOP) continue;
+
+      RefreshRates();
+      if (OrderType() == OP_BUYSTOP && Ask <= OrderOpenPrice() - 5 * pip) {
+         double lots = OrderLots();
+         string cmt  = OrderComment();
+         OrderDelete(OrderTicket());
+         int ticket = OrderSend(Symbol(), OP_BUY, lots, Ask, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+         if (ticket >= 0) Print(G_Name + " Gap-filled BUY ticket=", ticket);
+         else Print(G_Name + " Gap-fill BUY error ", GetLastError());
+      }
+      if (OrderType() == OP_SELLSTOP && Bid >= OrderOpenPrice() + 5 * pip) {
+         double lots = OrderLots();
+         string cmt  = OrderComment();
+         OrderDelete(OrderTicket());
+         int ticket = OrderSend(Symbol(), OP_SELL, lots, Bid, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+         if (ticket >= 0) Print(G_Name + " Gap-filled SELL ticket=", ticket);
+         else Print(G_Name + " Gap-fill SELL error ", GetLastError());
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL (Layer 1)                                        |
 //| Golden Cross -> BUY grid, Death Cross -> SELL grid               |
+//| Signal evaluated once per bar. 5-min cooldown after basket close.|
 //+------------------------------------------------------------------+
 void CheckMA() {
    static datetime lastBar = 0;
@@ -444,33 +558,45 @@ void CheckMA() {
 
    if (fast1 <= 0 || slow1 <= 0 || fast2 <= 0 || slow2 <= 0) return;
 
+   int cooldownSec = 300;
+
    // Golden Cross: fast crosses ABOVE slow
    if (!G_BuyActive && fast2 <= slow2 && fast1 > slow1) {
-      OpenGridLevel("BUY");
+      if (G_BuyLastClosed == 0 || TimeCurrent() - G_BuyLastClosed >= cooldownSec) {
+         Print(G_Name + " MA signal: Golden Cross -> BUY grid");
+         OpenGridLevel("BUY");
+      }
    }
 
    // Death Cross: fast crosses BELOW slow
    if (!G_SellActive && fast2 >= slow2 && fast1 < slow1) {
-      OpenGridLevel("SELL");
+      if (G_SellLastClosed == 0 || TimeCurrent() - G_SellLastClosed >= cooldownSec) {
+         Print(G_Name + " MA signal: Death Cross -> SELL grid");
+         OpenGridLevel("SELL");
+      }
    }
 }
 
 //+------------------------------------------------------------------+
 //| GENERAL TP CHECK                                                 |
-//| Basket close when price moves favorably by GeneralTP from entry  |
+//| Basket close when basket-weighted average price reaches TP       |
 //+------------------------------------------------------------------+
 void CheckGeneralTP() {
    if (GeneralTP <= 0) return;
    double pip = PipSize();
 
-   if (G_BuyActive && G_BuyFirstPrice > 0) {
-      if ((Bid - G_BuyFirstPrice) / pip >= GeneralTP) {
+   if (G_BuyActive) {
+      double avg = BasketAvgPrice("BUY");
+      if (avg > 0 && (Bid - avg) / pip >= GeneralTP) {
+         Print(G_Name + " GeneralTP hit BUY");
          BasketClose("BUY");
          return;
       }
    }
-   if (G_SellActive && G_SellFirstPrice > 0) {
-      if ((G_SellFirstPrice - Ask) / pip >= GeneralTP) {
+   if (G_SellActive) {
+      double avg = BasketAvgPrice("SELL");
+      if (avg > 0 && (avg - Ask) / pip >= GeneralTP) {
+         Print(G_Name + " GeneralTP hit SELL");
          BasketClose("SELL");
       }
    }
@@ -596,6 +722,7 @@ void OnTick() {
    CheckReset();
 
    // Risk and exit always run — positions must be managed even when stopped
+   ManagePendingOrders();
    CheckRisk();
    CheckTrailing();
    CheckGeneralTP();
