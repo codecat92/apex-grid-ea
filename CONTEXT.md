@@ -52,9 +52,10 @@ apex-grid-ea/
 │   ├── indicators/         ← custom indicator (jika ada)
 │   └── libraries/          ← fungsi reusable
 ├── docs/
-│   ├── strategy.md         ← penjelasan strategi untuk manusia
-│   ├── parameters.md       ← dokumentasi semua parameter
-│   └── user-guide.md       ← panduan penggunaan
+│   ├── strategy.md                  ← penjelasan strategi untuk manusia
+│   ├── parameters.md                ← dokumentasi semua parameter
+│   ├── user-guide.md                ← panduan penggunaan
+│   └── report_modul_non_technical.md ← laporan non-teknis untuk pengguna umum 
 └── tests/
     └── backtest-results/   ← hasil backtest
 ```
@@ -71,16 +72,22 @@ LAYER 1 — ENTRY SIGNAL
   Bot bisa punya BUY grid DAN SELL grid aktif sekaligus
 
 LAYER 2 — GRID MANAGER
-  Setiap grid level dibuka saat harga bergerak Grid Step dari entry sebelumnya
+  Level 0 = market order (instant entry) di harga pasar saat sinyal muncul
+  Level > 0 = pending stop order (Buy Stop / Sell Stop) di harga grid yang dihitung
+  Setiap level dibuka saat harga bergerak Grid Step dari entry terendah (BUY) / tertinggi (SELL)
   Lot setiap level = Start Lot × Multiplier^N
   Contoh: 0.10 → 0.15 → 0.23 → 0.34 → 0.51 → 0.76 → 1.14
+  Gap-fill: jika pending order terlewat harga, dihapus lalu diganti market order
+  Fallback ke market order jika error 130 (invalid stops, harga terlalu dekat)
 
 LAYER 3 — EXIT MANAGER (Basket Close)
   Tidak ada SL/TP per posisi (SL = 0, TP = 0)
-  Trailing stop aktif setelah harga bergerak Trigger Distance dari entry pertama
-  Trailing distance = Fixed Distance
-  Saat trailing terpicu: SEMUA posisi searah ditutup sekaligus
-  Setelah basket close → reset, tunggu sinyal MA baru
+  Trailing stop profit-peak: melacak profit tertinggi basket (bukan harga)
+  Trailing aktif setelah harga bergerak Trigger Distance dari entry pertama
+  Saat profit basket turun FixedDistance pips (dalam nilai uang) dari puncak → basket close
+  General TP: basket close jika rata-rata harga tertimbang lot mencapai GeneralTP pips
+  5-minute cooldown setelah basket close sebelum sinyal MA baru bisa entry lagi
+  Saat trailing terpicu: SEMUA posisi searah (termasuk pending orders) ditutup sekaligus
 
 LAYER 4 — TIME FILTER
   Bot hanya aktif di jam yang diset
@@ -104,7 +111,7 @@ LAYER 5 — RISK SHUTDOWN
 | Multiplier | 1.5 | double | Pengali lot setiap level grid baru |
 | Grid Step | 250 | int | Jarak dalam pips antar level grid |
 | General TP | 200 | int | Take profit keseluruhan dalam pips |
-| Orders per Step | 2 | int | Jumlah order yang dibuka per level grid |
+| Orders per Step | 1 | int | Jumlah order yang dibuka per level grid |
 
 ### MA Entry Signal
 | Parameter | Value | Tipe | Keterangan |
@@ -165,14 +172,15 @@ LAYER 5 — RISK SHUTDOWN
 ### Siklus Lengkap (dari observasi log):
 ```
 1. MA Crossover terjadi → bot mulai BUY atau SELL grid
-2. Grid level 0 dibuka: lot = 0.10
-3. Harga bergerak ~250 pips berlawanan → level 1: lot = 0.15
-4. Harga bergerak ~250 pips lagi → level 2: lot = 0.23
+2. Grid level 0 dibuka: lot = 0.10 (market order)
+3. Harga bergerak ~250 pips berlawanan → level 1: lot = 0.15 (pending BuyStop/SellStop)
+4. Harga bergerak ~250 pips lagi → level 2: lot = 0.23 (pending)
    ... dst
-5. Harga berbalik menguntungkan
-6. Trailing stop terpicu ("TRAL:::: close on the trawl")
-7. SEMUA posisi searah ditutup sekaligus (basket close)
-8. Bot langsung reset dan tunggu sinyal MA berikutnya
+5. Gap-fill: jika price melompati pending order tanpa trigger → delete pending + market order
+6. Harga berbalik menguntungkan
+7. Trailing stop terpicu (profit-peak drop FixedDistance)
+8. SEMUA posisi searah (market + pending) ditutup sekaligus (basket close)
+9. 5-minute cooldown → bot reset dan tunggu sinyal MA berikutnya
 ```
 
 ### Contoh Lot Progression yang Terobservasi:
@@ -204,12 +212,21 @@ Fase 5 — Risk Shutdown         : ✅ Selesai (Layer 5)
 Fase 6 — Testing & Dokumentasi : ⏳ Perlu testing di MT4
 ```
 
+### Changelog Ringkas:
+```
+v1.00 — Semua 5 layer dasar: MA entry, Grid market order, Basket close, Time filter, Risk shutdown
+v1.02 — Fix: OrderSend/OrderClose error handling, GeneralTP, lot decimal, time filter, stop reason
+v1.03 — Fitur Yetti-aligned: pending stop orders, basket-average TP, profit-peak trailing,
+        post-close cooldown 5 menit, gap-fill mechanism, error 130 fallback
+```
+
 ### File Status:
 ```
-ApexGrid.mq4  : ✅ Dibuat (v1.00, 523 baris)
-strategy.md   : ✅ Dibuat
-parameters.md : ✅ Dibuat
-user-guide.md : ✅ Dibuat
+ApexGrid.mq4                   : ✅ Dibuat (v1.03, 735 baris)
+strategy.md                    : ✅ Dibuat
+parameters.md                  : ✅ Dibuat
+user-guide.md                  : ✅ Dibuat
+report_modul_non_technical.md  : ✅ Dibuat
 ```
 
 ---
@@ -233,5 +250,5 @@ user-guide.md : ✅ Dibuat
 
 ---
 
-*Last updated: 11 Juni 2026 — Fernando Siahaan*
+*Last updated: 11 Juni 2026 — Fernando Siahaan (audited by AI Project Manager)*
 *Update dokumen ini setiap kali ada perubahan signifikan pada arsitektur atau progress*
