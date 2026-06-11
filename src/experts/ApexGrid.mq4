@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -57,10 +57,23 @@ extern double MaxDrawdown       = 15.0;   // Batas drawdown sebelum berhenti
 extern double MinMarginLevel    = 1000.0; // Batas minimum margin level
 
 //+------------------------------------------------------------------+
+//| STOP REASON CONSTANTS                                            |
+//+------------------------------------------------------------------+
+#define STOP_NONE      0
+#define STOP_DRAWDOWN  1
+#define STOP_PROFIT    2
+#define STOP_MARGIN    3
+
+//+------------------------------------------------------------------+
 //| GLOBAL CONSTANTS                                                 |
 //+------------------------------------------------------------------+
 string   G_Name            = "Apex Grid";
 int      G_Magic           = 1888;
+int      G_StartMin        = 0;
+int      G_EndMin          = 0;
+int      G_FridayStopMin   = 0;
+int      G_ExtraStartMin   = 0;
+int      G_ExtraEndMin     = 0;
 
 //+------------------------------------------------------------------+
 //| GRID STATE                                                       |
@@ -80,6 +93,7 @@ bool     G_SellTrailing    = false;
 //| RISK STATE                                                       |
 //+------------------------------------------------------------------+
 bool     G_Stopped         = false;
+int      G_StopReason      = 0;
 datetime G_DayStart        = 0;
 datetime G_WeekStart       = 0;
 double   G_DayEquity       = 0;
@@ -100,10 +114,11 @@ double NormalizeLot(double lot) {
    double min  = MarketInfo(Symbol(), MODE_MINLOT);
    double max  = MarketInfo(Symbol(), MODE_MAXLOT);
    double step = MarketInfo(Symbol(), MODE_LOTSTEP);
+   int digits = (step >= 0.1) ? 1 : 2;
    lot = MathFloor(lot / step) * step;
    if (lot < min) lot = min;
    if (lot > max) lot = max;
-   return NormalizeDouble(lot, 2);
+   return NormalizeDouble(lot, digits);
 }
 
 //+------------------------------------------------------------------+
@@ -122,12 +137,19 @@ string MakeComment(string side, int level) {
 }
 
 //+------------------------------------------------------------------+
+//| Helper: Convert "HH:MM" string to integer minutes                |
+//+------------------------------------------------------------------+
+int StrToMinutes(string t) {
+   return StrToInteger(StringSubstr(t, 0, 2)) * 60 + StrToInteger(StringSubstr(t, 3, 2));
+}
+
+//+------------------------------------------------------------------+
 //| Get current grid step (uses AdditionalGridStep during extra time)|
 //+------------------------------------------------------------------+
 int CurrentGridStep() {
    if (UseExtraTime) {
-      string now = TimeToString(TimeCurrent(), TIME_MINUTES);
-      if (now >= ExtraStart && now <= ExtraEnd) return AdditionalGridStep;
+      int now = Hour() * 60 + Minute();
+      if (now >= G_ExtraStartMin && now <= G_ExtraEndMin) return AdditionalGridStep;
    }
    return GridStep;
 }
@@ -137,28 +159,15 @@ int CurrentGridStep() {
 //+------------------------------------------------------------------+
 bool IsTradingAllowed() {
    if (G_Stopped) return false;
-   string now = TimeToString(TimeCurrent(), TIME_MINUTES);
-   if (now < StartTime || now > EndTime) return false;
-   if (DayOfWeek() == 5) {
+   int dow = DayOfWeek();
+   if (dow == 0 || dow == 6) return false;
+   int now = Hour() * 60 + Minute();
+   if (now < G_StartMin || now > G_EndMin) return false;
+   if (dow == 5) {
       if (!FridayTrade) return false;
-      if (now >= FridayStop) return false;
+      if (now >= G_FridayStopMin) return false;
    }
    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Count orders of one side                                         |
-//+------------------------------------------------------------------+
-int CountSide(string side) {
-   int n = 0;
-   string prefix = G_Name + " " + side;
-   for (int i = OrdersTotal() - 1; i >= 0; i--) {
-      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if (OrderMagicNumber() != G_Magic) continue;
-      if (OrderSymbol() != Symbol()) continue;
-      if (StringFind(OrderComment(), prefix) == 0) n++;
-   }
-   return n;
 }
 
 //+------------------------------------------------------------------+
@@ -215,8 +224,8 @@ double SideProfit(string side) {
 //+------------------------------------------------------------------+
 void OpenGridLevel(string side) {
    int level;
-   double price, sl, tp;
    int cmd, slip = 3;
+   double sl, tp;
 
    if (side == "BUY") {
       G_BuyActive = true;
@@ -230,42 +239,63 @@ void OpenGridLevel(string side) {
       cmd = OP_SELL;
    }
 
-   double lot   = LotByLevel(level);
-   string cmt   = MakeComment(side, level);
+   double lot = LotByLevel(level);
+   string cmt = MakeComment(side, level);
 
-   // Level 0: open at market price
    if (level == 0) {
-      price = (side == "BUY") ? Ask : Bid;
-      if (side == "BUY") {
-         G_BuyFirstPrice = price;
-         G_BuyPeak       = price;
-      } else {
-         G_SellFirstPrice = price;
-         G_SellTrough     = price;
+      if (!RefreshRates()) {
+         Print(G_Name + " RefreshRates failed at level 0");
+         if (side == "BUY") { G_BuyActive = false; G_BuyLevel = -1; }
+         else               { G_SellActive = false; G_SellLevel = -1; }
+         return;
       }
-   } else {
-      // Higher levels: price at GridStep from previous entry
-      double stepPips = CurrentGridStep() * PipSize();
       if (side == "BUY") {
-         double prev = LowestBuyPrice();
-         if (prev == 0) prev = G_BuyFirstPrice;
-         price = prev - stepPips;
-         if (price >= Ask) price = Ask - stepPips;
+         G_BuyFirstPrice = Ask;
+         G_BuyPeak       = Ask;
       } else {
-         double prev = HighestSellPrice();
-         if (prev == 0) prev = G_SellFirstPrice;
-         price = prev + stepPips;
-         if (price <= Bid) price = Bid + stepPips;
+         G_SellFirstPrice = Bid;
+         G_SellTrough     = Bid;
       }
    }
 
    sl = 0;
    tp = 0;
 
+   bool anySucceeded = false;
    for (int j = 0; j < OrdersPerStep; j++) {
-      RefreshRates();
-      price = (side == "BUY") ? Ask : Bid;
-      OrderSend(Symbol(), cmd, lot, price, slip, sl, tp, cmt, G_Magic, 0, CLR_NONE);
+      if (!RefreshRates()) {
+         Print(G_Name + " RefreshRates failed at level ", level);
+         continue;
+      }
+      double price = (side == "BUY") ? Ask : Bid;
+      int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, tp, cmt, G_Magic, 0, CLR_NONE);
+      if (ticket >= 0) {
+         anySucceeded = true;
+      } else {
+         Print(G_Name + " OrderSend error ", GetLastError(), " side=", side, " level=", level);
+      }
+   }
+
+   if (!anySucceeded) {
+      if (side == "BUY") {
+         G_BuyLevel--;
+         if (G_BuyLevel < 0) {
+            G_BuyActive = false;
+            G_BuyLevel = -1;
+            G_BuyFirstPrice = 0;
+            G_BuyPeak = 0;
+            G_BuyTrailing = false;
+         }
+      } else {
+         G_SellLevel--;
+         if (G_SellLevel < 0) {
+            G_SellActive = false;
+            G_SellLevel = -1;
+            G_SellFirstPrice = 0;
+            G_SellTrough = 0;
+            G_SellTrailing = false;
+         }
+      }
    }
 }
 
@@ -287,14 +317,34 @@ void BasketClose(string side) {
       n++;
    }
 
+   if (n == 0) {
+      Print(G_Name + " BasketClose: no orders to close for ", side);
+      return;
+   }
+
+   int failed = 0;
    for (int i = 0; i < n; i++) {
-      if (OrderSelect(tickets[i], SELECT_BY_TICKET, MODE_TRADES)) {
-         if (OrderType() == OP_BUY) OrderClose(OrderTicket(), OrderLots(), Bid, 3, CLR_NONE);
-         else if (OrderType() == OP_SELL) OrderClose(OrderTicket(), OrderLots(), Ask, 3, CLR_NONE);
+      if (!OrderSelect(tickets[i], SELECT_BY_TICKET, MODE_TRADES)) {
+         Print(G_Name + " BasketClose: order ", tickets[i], " no longer exists");
+         continue;
+      }
+      RefreshRates();
+      bool ok = false;
+      if (OrderType() == OP_BUY)
+         ok = OrderClose(tickets[i], OrderLots(), Bid, 3, CLR_NONE);
+      else if (OrderType() == OP_SELL)
+         ok = OrderClose(tickets[i], OrderLots(), Ask, 3, CLR_NONE);
+      if (!ok) {
+         failed++;
+         Print(G_Name + " BasketClose error ", GetLastError(), " ticket=", tickets[i]);
       }
    }
 
-   // Reset state
+   if (failed > 0) {
+      Print(G_Name + " BasketClose: ", failed, " orders failed to close for ", side);
+      return;
+   }
+
    if (side == "BUY") {
       G_BuyActive    = false;
       G_BuyLevel     = -1;
@@ -352,16 +402,6 @@ void CheckTrailing() {
 }
 
 //+------------------------------------------------------------------+
-//| Helper: cek apakah berhenti karena drawdown (bukan profit target)|
-//+------------------------------------------------------------------+
-bool IsStoppedByDrawdown() {
-   double eq  = AccountEquity();
-   double bal = AccountBalance();
-   double dd  = (bal > 0) ? (bal - eq) / bal * 100 : 0;
-   return (dd >= MaxDrawdown);
-}
-
-//+------------------------------------------------------------------+
 //| Check if a new grid level needs to be opened                     |
 //| Harga bergerak GridStep berlawanan arah dari level sebelumnya   |
 //+------------------------------------------------------------------+
@@ -397,6 +437,8 @@ void CheckMA() {
    double fast2 = iMA(Symbol(), 0, MAFastPeriod, 0, MAMethod, MAPrice, 2);
    double slow2 = iMA(Symbol(), 0, MASlowPeriod, 0, MAMethod, MAPrice, 2);
 
+   if (fast1 <= 0 || slow1 <= 0 || fast2 <= 0 || slow2 <= 0) return;
+
    // Golden Cross: fast crosses ABOVE slow
    if (!G_BuyActive && fast2 <= slow2 && fast1 > slow1) {
       OpenGridLevel("BUY");
@@ -405,6 +447,27 @@ void CheckMA() {
    // Death Cross: fast crosses BELOW slow
    if (!G_SellActive && fast2 >= slow2 && fast1 < slow1) {
       OpenGridLevel("SELL");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| GENERAL TP CHECK                                                 |
+//| Basket close when price moves favorably by GeneralTP from entry  |
+//+------------------------------------------------------------------+
+void CheckGeneralTP() {
+   if (GeneralTP <= 0) return;
+   double pip = PipSize();
+
+   if (G_BuyActive && G_BuyFirstPrice > 0) {
+      if ((Bid - G_BuyFirstPrice) / pip >= GeneralTP) {
+         BasketClose("BUY");
+         return;
+      }
+   }
+   if (G_SellActive && G_SellFirstPrice > 0) {
+      if ((G_SellFirstPrice - Ask) / pip >= GeneralTP) {
+         BasketClose("SELL");
+      }
    }
 }
 
@@ -420,6 +483,7 @@ void CheckRisk() {
    // Auto stop jika drawdown melebihi batas
    if (AutoStopTrading && ddPct >= MaxDrawdown) {
       G_Stopped = true;
+      G_StopReason = STOP_DRAWDOWN;
       return;
    }
 
@@ -428,6 +492,7 @@ void CheckRisk() {
       if (G_BuyActive)  BasketClose("BUY");
       if (G_SellActive) BasketClose("SELL");
       G_Stopped = true;
+      G_StopReason = STOP_DRAWDOWN;
       return;
    }
 
@@ -436,12 +501,14 @@ void CheckRisk() {
       if (G_BuyActive)  BasketClose("BUY");
       if (G_SellActive) BasketClose("SELL");
       G_Stopped = true;
+      G_StopReason = STOP_MARGIN;
       return;
    }
 
    // Stop trading jika margin level di bawah minimum
    if (mrgLv < MinMarginLevel) {
       G_Stopped = true;
+      G_StopReason = STOP_MARGIN;
       return;
    }
 
@@ -450,6 +517,7 @@ void CheckRisk() {
    double dayPct    = (G_DayEquity > 0) ? (dayProfit / G_DayEquity) * 100 : 0;
    if (dayPct >= DailyProfitPct) {
       G_Stopped = true;
+      G_StopReason = STOP_PROFIT;
       return;
    }
 
@@ -458,9 +526,8 @@ void CheckRisk() {
    double weekPct    = (G_WeekEquity > 0) ? (weekProfit / G_WeekEquity) * 100 : 0;
    if (weekPct >= WeeklyProfitPct) {
       G_Stopped = true;
+      G_StopReason = STOP_PROFIT;
    }
-
-   // Jangan reset G_Stopped di sini, biar di daily reset
 }
 
 //+------------------------------------------------------------------+
@@ -473,13 +540,19 @@ void CheckReset() {
    if (today != G_DayStart) {
       G_DayStart = today;
       G_DayEquity = AccountEquity();
-      // Resume trading di hari baru jika hanya kena profit target
-      if (!IsStoppedByDrawdown()) G_Stopped = false;
+      if (G_StopReason != STOP_DRAWDOWN) {
+         G_Stopped = false;
+         G_StopReason = STOP_NONE;
+      }
    }
 
    if (thisWk != G_WeekStart) {
       G_WeekStart = thisWk;
       G_WeekEquity = AccountEquity();
+      if (G_StopReason == STOP_PROFIT) {
+         G_Stopped = false;
+         G_StopReason = STOP_NONE;
+      }
    }
 }
 
@@ -488,6 +561,12 @@ void CheckReset() {
 //+------------------------------------------------------------------+
 int OnInit() {
    G_Magic = MagicNumber;
+
+   G_StartMin      = StrToMinutes(StartTime);
+   G_EndMin        = StrToMinutes(EndTime);
+   G_FridayStopMin = StrToMinutes(FridayStop);
+   G_ExtraStartMin = StrToMinutes(ExtraStart);
+   G_ExtraEndMin   = StrToMinutes(ExtraEnd);
 
    G_DayStart  = iTime(Symbol(), PERIOD_D1, 0);
    G_WeekStart = iTime(Symbol(), PERIOD_W1, 0);
@@ -522,5 +601,6 @@ void OnTick() {
 
    CheckMA();            // Layer 1: Entry signal
    CheckGridLevels();    // Layer 2: Grid management
+   CheckGeneralTP();     // General take-profit
    CheckTrailing();      // Layer 3: Exit / trailing stop
 }
