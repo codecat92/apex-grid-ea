@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -432,6 +432,11 @@ void CheckGridLevels() {
 //| Golden Cross -> BUY grid, Death Cross -> SELL grid               |
 //+------------------------------------------------------------------+
 void CheckMA() {
+   static datetime lastBar = 0;
+   datetime currentBar = iTime(Symbol(), 0, 0);
+   if (currentBar == lastBar) return;
+   lastBar = currentBar;
+
    double fast1 = iMA(Symbol(), 0, MAFastPeriod, 0, MAMethod, MAPrice, 1);
    double slow1 = iMA(Symbol(), 0, MASlowPeriod, 0, MAMethod, MAPrice, 1);
    double fast2 = iMA(Symbol(), 0, MAFastPeriod, 0, MAMethod, MAPrice, 2);
@@ -590,17 +595,14 @@ void OnDeinit(const int reason) {
 void OnTick() {
    CheckReset();
 
-   if (!IsTradingAllowed()) {
-      // Risk tetap berjalan meski trading dilarang
-      CheckRisk();
-      return;
-   }
-
+   // Risk and exit always run — positions must be managed even when stopped
    CheckRisk();
-   if (G_Stopped) return;
+   CheckTrailing();
+   CheckGeneralTP();
+
+   // Entries and grid expansion only when trading allowed and bot active
+   if (!IsTradingAllowed() || G_Stopped) return;
 
    CheckMA();            // Layer 1: Entry signal
    CheckGridLevels();    // Layer 2: Grid management
-   CheckGeneralTP();     // General take-profit
-   CheckTrailing();      // Layer 3: Exit / trailing stop
 }
