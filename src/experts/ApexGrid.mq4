@@ -556,7 +556,7 @@ void ManagePendingOrders() {
 //+------------------------------------------------------------------+
 void CheckMA() {
    static datetime lastBar = 0;
-   datetime currentBar = iTime(Symbol(), 0, 0);
+   datetime currentBar = Time[0];
    if (currentBar == lastBar) return;
    lastBar = currentBar;
 
