@@ -173,7 +173,46 @@ Setelah dicompile di MetaTrader 4, muncul 3 warning:
 
 ---
 
-## Ringkasan: 19 Bug Ditemukan & Diperbaiki
+### 13:00 — EA Mati Permanen Setelah Floating Drawdown (2 Tahun Diam)
+
+- **Gejala:** Backtest Jan 2024 – Jun 2026: EA hanya trading 5 bulan pertama (Jan–Mei 2024). Dari 28 Mei 2024 sampai akhir backtest (11 Juni 2026), tidak ada SATU pun posisi terbuka — 2 tahun diam total. Tidak mungkin MA5/MA40 di M1 tidak pernah bersilangan selama 2 tahun.
+- **Penyebab:** Dua bug bekerja sama:
+
+  **Bug A — `CheckRisk()` membaca floating drawdown, bukan closed drawdown.**
+  - Grid BUY 4 level floating selama 2 bulan (Mar–Mei 2024). Floating loss ~$2,230 di balance $12,268 = ddPct 18% > MaxDrawdown 15%.
+  - Bot set `STOP_DRAWDOWN`, tapi TIDAK menutup posisi — hanya blokir entry baru.
+  - Beberapa saat kemudian posisi floating jadi profit dan ditutup trailing. Saldo aman.
+
+  **Bug B — `CheckReset()` tidak pernah me-reset `STOP_DRAWDOWN`.**
+  - Kode sengaja skip `STOP_DRAWDOWN` di daily reset: `if (G_StopReason != STOP_DRAWDOWN)`.
+  - Meski posisi sudah tutup profit, drawdown sudah 0%, `G_Stopped` tetap `true` SELAMANYA.
+
+- **Dampak:** Backtest tidak representatif (5 bulan dari 2.5 tahun). Live trading bisa mati permanen hanya karena floating loss sesaat yang akhirnya profit.
+- **Solusi:** Ubah `CheckReset()` — untuk `STOP_DRAWDOWN` dan `STOP_MARGIN`, re-check kondisi saat ini saat daily reset. Kalau drawdown/margin sudah sehat, lanjutkan trading.
+
+```mql4
+// SEBELUM (bug):
+if (G_StopReason != STOP_DRAWDOWN) {
+   G_Stopped = false;
+   G_StopReason = STOP_NONE;
+}
+
+// SESUDAH (fix):
+if (G_StopReason == STOP_DRAWDOWN) {
+   double ddNow = (AccountBalance() > 0) ? (AccountBalance() - AccountEquity()) / AccountBalance() * 100 : 0;
+   if (ddNow < MaxDrawdown) { G_Stopped = false; G_StopReason = STOP_NONE; }
+} else if (G_StopReason == STOP_MARGIN) {
+   double mrgNow = (AccountMargin() > 0) ? (AccountEquity() / AccountMargin()) * 100 : DBL_MAX;
+   if (mrgNow >= MinMarginLevel) { G_Stopped = false; G_StopReason = STOP_NONE; }
+} else if (G_StopReason != STOP_NONE) {
+   G_Stopped = false;
+   G_StopReason = STOP_NONE;
+}
+```
+
+---
+
+## Ringkasan: 20 Bug Ditemukan & Diperbaiki
 
 | # | Kapan | Apa | Dampak | Status |
 |---|-------|-----|--------|--------|
@@ -184,6 +223,7 @@ Setelah dicompile di MetaTrader 4, muncul 3 warning:
 | 18 | 12 Jun, 10:18 | Bot diam — iTime desync | Tidak ada order terbuka | ✅ |
 | 19 | 12 Jun, 12:07 | Stop di tick pertama — margin 0 | Bot mati total | ✅ |
 | 20 | 12 Jun, 12:18 | RefreshRates gagal di tester | Backtest kosong | ✅ |
+| 21 | 12 Jun, 13:00 | STOP_DRAWDOWN tidak pernah reset — EA mati permanen | 2 tahun tanpa trade | ✅ |
 
 ---
 

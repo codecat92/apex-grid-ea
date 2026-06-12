@@ -675,7 +675,13 @@ void CheckReset() {
    if (today != G_DayStart) {
       G_DayStart = today;
       G_DayEquity = AccountEquity();
-      if (G_StopReason != STOP_DRAWDOWN) {
+      if (G_StopReason == STOP_DRAWDOWN) {
+         double ddNow = (AccountBalance() > 0) ? (AccountBalance() - AccountEquity()) / AccountBalance() * 100 : 0;
+         if (ddNow < MaxDrawdown) { G_Stopped = false; G_StopReason = STOP_NONE; }
+      } else if (G_StopReason == STOP_MARGIN) {
+         double mrgNow = (AccountMargin() > 0) ? (AccountEquity() / AccountMargin()) * 100 : DBL_MAX;
+         if (mrgNow >= MinMarginLevel) { G_Stopped = false; G_StopReason = STOP_NONE; }
+      } else if (G_StopReason != STOP_NONE) {
          G_Stopped = false;
          G_StopReason = STOP_NONE;
       }
