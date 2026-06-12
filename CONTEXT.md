@@ -44,20 +44,27 @@ sekaligus (basket close) ketika trailing stop terpicu.
 
 ```
 apex-grid-ea/
-├── CONTEXT.md              ← dokumen ini, selalu update
-├── README.md               ← overview publik
+├── AGENTS.md                ← instruksi untuk AI coding tools
+├── opencode.json            ← konfigurasi OpenCode GO
+├── CONTEXT.md               ← dokumen ini, selalu update
+├── README.md                ← overview publik
+├── .vscode/                 ← konfigurasi VS Code / Cursor
+├── strategy-test-result/    ← hasil backtest MT4 (HTML)
+├── error-logs/              ← log error debugging
 ├── src/
 │   ├── experts/
-│   │   └── ApexGrid.mq4   ← file EA utama
-│   ├── indicators/         ← custom indicator (jika ada)
-│   └── libraries/          ← fungsi reusable
+│   │   └── ApexGrid.mq4    ← file EA utama
+│   ├── indicators/          ← custom indicator (jika ada)
+│   └── libraries/           ← fungsi reusable
 ├── docs/
-│   ├── strategy.md                  ← penjelasan strategi untuk manusia
-│   ├── parameters.md                ← dokumentasi semua parameter
-│   ├── user-guide.md                ← panduan penggunaan
-│   └── report_modul_non_technical.md ← laporan non-teknis untuk pengguna umum 
+│   ├── strategy.md                       ← penjelasan strategi
+│   ├── parameters.md                     ← dokumentasi parameter
+│   ├── user-guide.md                     ← panduan penggunaan
+│   ├── report_modul_non_technical.md      ← laporan non-teknis
+│   ├── penjelasan_kode_apexGrid.md        ← penjelasan kode per blok (pemula)
+│   └── proses_debug.md                   ← jurnal perjalanan debugging
 └── tests/
-    └── backtest-results/   ← hasil backtest
+    └── backtest-results/    ← hasil backtest
 ```
 
 ---
@@ -218,15 +225,21 @@ v1.00 — Semua 5 layer dasar: MA entry, Grid market order, Basket close, Time f
 v1.02 — Fix: OrderSend/OrderClose error handling, GeneralTP, lot decimal, time filter, stop reason
 v1.03 — Fitur Yetti-aligned: pending stop orders, basket-average TP, profit-peak trailing,
         post-close cooldown 5 menit, gap-fill mechanism, error 130 fallback
+v1.03f1 — Fix: RefreshRates bail-out dihapus (block order di Strategy Tester)
+v1.03f2 — Fix: margin level default 0 → DBL_MAX (trigger STOP_MARGIN tanpa posisi)
+v1.03f3 — Fix: iTime() → Time[] (bar guard silent fail saat history desync)
+v1.03f4 — Fix: OrderDelete return unchecked, tickets[] uninitialized (compiler warnings)
 ```
 
 ### File Status:
 ```
-ApexGrid.mq4                   : ✅ Dibuat (v1.03, 735 baris)
-strategy.md                    : ✅ Dibuat
-parameters.md                  : ✅ Dibuat
-user-guide.md                  : ✅ Dibuat
-report_modul_non_technical.md  : ✅ Dibuat
+ApexGrid.mq4                    : ✅ Dibuat (v1.03, 739 baris)
+strategy.md                     : ✅ Dibuat
+parameters.md                   : ✅ Dibuat
+user-guide.md                   : ✅ Dibuat
+report_modul_non_technical.md   : ✅ Dibuat
+penjelasan_kode_apexGrid.md     : ✅ Dibuat
+proses_debug.md                 : ✅ Dibuat
 ```
 
 ---
@@ -250,5 +263,5 @@ report_modul_non_technical.md  : ✅ Dibuat
 
 ---
 
-*Last updated: 11 Juni 2026 — Fernando Siahaan (audited by AI Project Manager)*
+*Last updated: 12 Juni 2026 — AI Project Manager (audit rutin)*
 *Update dokumen ini setiap kali ada perubahan signifikan pada arsitektur atau progress*
