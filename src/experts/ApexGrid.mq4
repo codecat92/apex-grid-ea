@@ -618,7 +618,7 @@ void CheckRisk() {
    double eq    = AccountEquity();
    double bal   = AccountBalance();
    double ddPct = (bal > 0) ? (bal - eq) / bal * 100 : 0;
-   double mrgLv = (AccountMargin() > 0) ? (eq / AccountMargin()) * 100 : 0;
+   double mrgLv = (AccountMargin() > 0) ? (eq / AccountMargin()) * 100 : DBL_MAX;
 
    // Auto stop jika drawdown melebihi batas
    if (AutoStopTrading && ddPct >= MaxDrawdown) {
