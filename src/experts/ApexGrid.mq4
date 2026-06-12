@@ -283,12 +283,7 @@ void OpenGridLevel(string side) {
    string cmt = MakeComment(side, level);
 
    if (level == 0) {
-      if (!RefreshRates()) {
-         Print(G_Name + " RefreshRates failed at level 0");
-         if (side == "BUY") { G_BuyActive = false; G_BuyLevel = -1; G_BuyPeakProfit = 0; }
-         else               { G_SellActive = false; G_SellLevel = -1; G_SellPeakProfit = 0; }
-         return;
-      }
+      RefreshRates();
       if (side == "BUY") {
          G_BuyFirstPrice = Ask;
          G_BuyPeak       = Ask;
