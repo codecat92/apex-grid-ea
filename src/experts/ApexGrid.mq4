@@ -371,6 +371,7 @@ void OpenGridLevel(string side) {
 //+------------------------------------------------------------------+
 void BasketClose(string side) {
    int tickets[500];
+   ArrayInitialize(tickets, 0);
    int n = 0;
    string prefix = G_Name + " " + side;
 
@@ -524,18 +525,26 @@ void ManagePendingOrders() {
       if (OrderType() == OP_BUYSTOP && Ask <= OrderOpenPrice() - 5 * pip) {
          double lots = OrderLots();
          string cmt  = OrderComment();
-         OrderDelete(OrderTicket());
-         int ticket = OrderSend(Symbol(), OP_BUY, lots, Ask, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
-         if (ticket >= 0) Print(G_Name + " Gap-filled BUY ticket=", ticket);
-         else Print(G_Name + " Gap-fill BUY error ", GetLastError());
+         int delTicket = OrderTicket();
+         if (OrderDelete(delTicket)) {
+            int ticket = OrderSend(Symbol(), OP_BUY, lots, Ask, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+            if (ticket >= 0) Print(G_Name + " Gap-filled BUY ticket=", ticket);
+            else Print(G_Name + " Gap-fill BUY error ", GetLastError());
+         } else {
+            Print(G_Name + " Gap-fill: failed to delete BUYSTOP ticket=", delTicket, " err=", GetLastError());
+         }
       }
       if (OrderType() == OP_SELLSTOP && Bid >= OrderOpenPrice() + 5 * pip) {
          double lots = OrderLots();
          string cmt  = OrderComment();
-         OrderDelete(OrderTicket());
-         int ticket = OrderSend(Symbol(), OP_SELL, lots, Bid, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
-         if (ticket >= 0) Print(G_Name + " Gap-filled SELL ticket=", ticket);
-         else Print(G_Name + " Gap-fill SELL error ", GetLastError());
+         int delTicket = OrderTicket();
+         if (OrderDelete(delTicket)) {
+            int ticket = OrderSend(Symbol(), OP_SELL, lots, Bid, 3, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+            if (ticket >= 0) Print(G_Name + " Gap-filled SELL ticket=", ticket);
+            else Print(G_Name + " Gap-fill SELL error ", GetLastError());
+         } else {
+            Print(G_Name + " Gap-fill: failed to delete SELLSTOP ticket=", delTicket, " err=", GetLastError());
+         }
       }
    }
 }
