@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.05"
+#property version   "1.06"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -18,6 +18,7 @@ extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 200;    // TP keseluruhan (pips)
 extern int    OrdersPerStep     = 2;      // Jumlah order per level
 extern int    MaxGridLevel      = 10;     // Batas maksimum level grid
+extern int    StopLossPips      = 375;    // Jarak Stop Loss per level (pips)
 
 //+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL PARAMETERS                                       |
@@ -326,9 +327,9 @@ void OpenGridLevel(string side) {
       double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
       double sl = 0;
       if (side == "BUY")
-         sl = price - (GridStep * 2 * PipSize());
+         sl = price - (StopLossPips * PipSize());
       else
-         sl = price + (GridStep * 2 * PipSize());
+         sl = price + (StopLossPips * PipSize());
       int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, 0, cmt, G_Magic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
@@ -340,9 +341,9 @@ void OpenGridLevel(string side) {
             double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
             double sl2 = 0;
             if (side == "BUY")
-               sl2 = mktPrice - (GridStep * 2 * PipSize());
+               sl2 = mktPrice - (StopLossPips * PipSize());
             else
-               sl2 = mktPrice + (GridStep * 2 * PipSize());
+               sl2 = mktPrice + (StopLossPips * PipSize());
             ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
                                lot, mktPrice, slip, sl2, 0, cmt, G_Magic, 0, CLR_NONE);
             if (ticket >= 0) anySucceeded = true;
