@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.03"
+#property version   "1.04"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -16,7 +16,9 @@ extern double StartLot          = 0.10;   // Lot pertama setiap grid
 extern double Multiplier        = 1.5;    // Pengali lot tiap level
 extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 200;    // TP keseluruhan (pips)
-extern int    OrdersPerStep     = 1;      // Jumlah order per level
+extern int    OrdersPerStep     = 2;      // Jumlah order per level
+extern int    MaxGridLevel      = 10;     // Batas maksimum level grid
+extern bool   UseLevelStopLoss  = false;  // Pasang SL di level maksimum
 
 //+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL PARAMETERS                                       |
@@ -25,6 +27,9 @@ extern int    MAFastPeriod      = 5;      // Periode MA cepat
 extern int    MASlowPeriod      = 40;     // Periode MA lambat
 extern int    MAMethod          = 0;      // 0=SMA,1=EMA,2=SMMA,3=LWMA
 extern int    MAPrice           = 0;      // 0=Close,1=Open,2=High,3=Low,4=Median,5=Typical,6=Weighted
+extern int    BBPeriod          = 20;     // Periode Bollinger Bands
+extern double BBDeviation       = 2.0;    // Deviasi Bollinger Bands
+extern bool   UseBBFilter       = true;   // Aktifkan filter Bollinger Bands
 
 //+------------------------------------------------------------------+
 //| TRAILING EXIT PARAMETERS                                         |
@@ -321,18 +326,27 @@ void OpenGridLevel(string side) {
    for (int j = 0; j < OrdersPerStep; j++) {
       RefreshRates();
       double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
-      int ticket = OrderSend(Symbol(), cmd, lot, price, slip, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+      double sl = 0;
+      if (UseLevelStopLoss && level >= MaxGridLevel) {
+         if (side == "BUY") sl = price - GridStep * PipSize();
+         else               sl = price + GridStep * PipSize();
+      }
+      int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, 0, cmt, G_Magic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
          Print(G_Name + " Order opened ticket=", ticket);
       } else {
          int err = GetLastError();
          if (isPending && (err == 130)) {
-            // ERR_INVALID_STOPS — price too close to market, fallback to market order
             RefreshRates();
             double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
+            double sl2 = 0;
+            if (UseLevelStopLoss && level >= MaxGridLevel) {
+               if (side == "BUY") sl2 = mktPrice - GridStep * PipSize();
+               else               sl2 = mktPrice + GridStep * PipSize();
+            }
             ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
-                               lot, mktPrice, slip, 0, 0, cmt, G_Magic, 0, CLR_NONE);
+                               lot, mktPrice, slip, sl2, 0, cmt, G_Magic, 0, CLR_NONE);
             if (ticket >= 0) anySucceeded = true;
             else Print(G_Name + " Market fallback error ", GetLastError(), " side=", side, " level=", level);
          } else {
@@ -491,7 +505,7 @@ void CheckGridLevels() {
       double lowest = LowestBuyPrice();
       if (lowest == 0) lowest = G_BuyFirstPrice;
       dist = (lowest - Bid) / pip;
-      if (dist >= step) OpenGridLevel("BUY");
+      if (dist >= step && G_BuyLevel < MaxGridLevel) OpenGridLevel("BUY");
    }
 
    // SELL: price rises GridStep from deepest entry
@@ -499,7 +513,7 @@ void CheckGridLevels() {
       double highest = HighestSellPrice();
       if (highest == 0) highest = G_SellFirstPrice;
       dist = (Ask - highest) / pip;
-      if (dist >= step) OpenGridLevel("SELL");
+      if (dist >= step && G_SellLevel < MaxGridLevel) OpenGridLevel("SELL");
    }
 }
 
@@ -562,18 +576,32 @@ void CheckMA() {
 
    if (fast1 <= 0 || slow1 <= 0 || fast2 <= 0 || slow2 <= 0) return;
 
-   int cooldownSec = 300;
+   int cooldownSec = 0;
 
-   // Golden Cross: fast crosses ABOVE slow
-   if (!G_BuyActive && fast2 <= slow2 && fast1 > slow1) {
+   bool goldenCross = (!G_BuyActive && fast2 <= slow2 && fast1 > slow1);
+   bool deathCross  = (!G_SellActive && fast2 >= slow2 && fast1 < slow1);
+
+   bool bbBuyOk = true;
+   bool bbSellOk = true;
+
+   if (UseBBFilter && BBPeriod > 0) {
+      double bbUpper = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_UPPER, 1);
+      double bbLower = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_LOWER, 1);
+
+      if (bbUpper > 0 && bbLower > 0) {
+         bbBuyOk  = (Low[1] <= bbLower || Close[1] <= bbLower);
+         bbSellOk = (High[1] >= bbUpper || Close[1] >= bbUpper);
+      }
+   }
+
+   if (goldenCross && bbBuyOk) {
       if (G_BuyLastClosed == 0 || TimeCurrent() - G_BuyLastClosed >= cooldownSec) {
          Print(G_Name + " MA signal: Golden Cross -> BUY grid");
          OpenGridLevel("BUY");
       }
    }
 
-   // Death Cross: fast crosses BELOW slow
-   if (!G_SellActive && fast2 >= slow2 && fast1 < slow1) {
+   if (deathCross && bbSellOk) {
       if (G_SellLastClosed == 0 || TimeCurrent() - G_SellLastClosed >= cooldownSec) {
          Print(G_Name + " MA signal: Death Cross -> SELL grid");
          OpenGridLevel("SELL");
@@ -675,16 +703,8 @@ void CheckReset() {
    if (today != G_DayStart) {
       G_DayStart = today;
       G_DayEquity = AccountEquity();
-      if (G_StopReason == STOP_DRAWDOWN) {
-         double ddNow = (AccountBalance() > 0) ? (AccountBalance() - AccountEquity()) / AccountBalance() * 100 : 0;
-         if (ddNow < MaxDrawdown) { G_Stopped = false; G_StopReason = STOP_NONE; }
-      } else if (G_StopReason == STOP_MARGIN) {
-         double mrgNow = (AccountMargin() > 0) ? (AccountEquity() / AccountMargin()) * 100 : DBL_MAX;
-         if (mrgNow >= MinMarginLevel) { G_Stopped = false; G_StopReason = STOP_NONE; }
-      } else if (G_StopReason != STOP_NONE) {
-         G_Stopped = false;
-         G_StopReason = STOP_NONE;
-      }
+      G_Stopped = false;
+      G_StopReason = STOP_NONE;
    }
 
    if (thisWk != G_WeekStart) {

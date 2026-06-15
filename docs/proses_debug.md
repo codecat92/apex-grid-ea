@@ -212,7 +212,39 @@ if (G_StopReason == STOP_DRAWDOWN) {
 
 ---
 
-## Ringkasan: 20 Bug Ditemukan & Diperbaiki
+### 14:00 — v1.04: 5 Perubahan Besar (Yetti-Aligned)
+
+Berdasarkan perbandingan dengan data live Yetti Classic (1,215 trade, PF 3.08), 5 perubahan dilakukan untuk mengejar ketertinggalan:
+
+#### Perubahan 1 — STOP_DRAWDOWN di-reset setiap hari
+- **Masalah:** `CheckReset()` punya logika kompleks re-check kondisi untuk STOP_DRAWDOWN dan STOP_MARGIN. STOP_DRAWDOWN bisa freeze permanen meski kondisi sudah pulih.
+- **Solusi:** Semua stop reason (termasuk STOP_DRAWDOWN) di-reset setiap hari baru. Kalau drawdown masih di atas threshold, `CheckRisk()` langsung trigger lagi.
+
+#### Perubahan 2 — OrdersPerStep = 2
+- **Masalah:** ApexGrid cuma buka 1 order per level. Yetti buka 2 — exposure 2× lipat.
+- **Solusi:** Ubah default `OrdersPerStep` dari 1 ke 2.
+
+#### Perubahan 3 — Max Grid Level + Stop Loss
+- **Masalah:** Grid tidak ada batas level. Trending panjang bisa menghancurkan akun. Yetti punya SL di level 10.
+- **Solusi:** 
+  - Parameter baru: `MaxGridLevel = 10`, `UseLevelStopLoss = false`
+  - `CheckGridLevels()` dicegah buka level baru kalau sudah di MaxGridLevel
+  - Di `OpenGridLevel()`, kalau level >= MaxGridLevel dan UseLevelStopLoss aktif, pasang SL = GridStep pips dari entry
+
+#### Perubahan 4 — Bollinger Bands Entry Filter
+- **Masalah:** Hanya pakai MA crossover — 12 trade dalam 2.5 tahun vs 1,215 Yetti. Frekuensi 100× lebih rendah.
+- **Solusi:**
+  - Parameter baru: `BBPeriod = 20`, `BBDeviation = 2.0`, `UseBBFilter = true`
+  - Entry hanya terjadi jika MA crossover DAN harga menyentuh outer band (BUY = Lower band, SELL = Upper band)
+  - Menggunakan `iBands()` bawaan MQL4
+
+#### Perubahan 5 — Cooldown = 0
+- **Masalah:** Cooldown 5 menit setelah basket close memperlambat re-entry. Yetti tidak punya cooldown.
+- **Solusi:** `cooldownSec = 0` — entry bisa langsung di tick berikutnya setelah basket close.
+
+---
+
+## Ringkasan: 25 Bug & Improvement
 
 | # | Kapan | Apa | Dampak | Status |
 |---|-------|-----|--------|--------|
@@ -224,7 +256,11 @@ if (G_StopReason == STOP_DRAWDOWN) {
 | 19 | 12 Jun, 12:07 | Stop di tick pertama — margin 0 | Bot mati total | ✅ |
 | 20 | 12 Jun, 12:18 | RefreshRates gagal di tester | Backtest kosong | ✅ |
 | 21 | 12 Jun, 13:00 | STOP_DRAWDOWN tidak pernah reset — EA mati permanen | 2 tahun tanpa trade | ✅ |
+| 22 | 12 Jun, 14:00 | OrdersPerStep = 1 (Yetti = 2) — exposure kurang | Frekuensi rendah | ✅ |
+| 23 | 12 Jun, 14:00 | Tidak ada batas level grid — trending hancurkan akun | Drawdown 14% | ✅ |
+| 24 | 12 Jun, 14:00 | Entry hanya MA crossover — frekuensi 100× lebih rendah | 12 vs 1,215 trade | ✅ |
+| 25 | 12 Jun, 14:00 | Cooldown 5 menit perlambat re-entry | Gap antar trade | ✅ |
 
 ---
 
-*Terakhir diperbarui: 12 Juni 2026 — Fernando Siahaan*
+*Terakhir diperbarui: 12 Juni 2026 — Fernando Siahaan (v1.04)*

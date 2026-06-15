@@ -1,0 +1,13 @@
+{
+  "files.associations": {
+    "*.mq4": "mql4",
+    "*.mqh": "mql4",
+    "*.mq5": "mql5"
+  },
+  "[mql4]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.wordWrap": "off"
+  },
+  "mql.server.path": "${workspaceFolder}/mql4-lsp-server"
+}

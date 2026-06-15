@@ -73,7 +73,8 @@ apex-grid-ea/
 
 ```
 LAYER 1 — ENTRY SIGNAL
-  Trigger: MA Crossover (Golden Cross / Death Cross)
+  ⚠️ Yetti asli: Bollinger Bands + MA (belum dikonfirmasi full, observasi visual)
+  ApexGrid: MA Crossover (Golden Cross / Death Cross)
   Golden Cross (MA Fast memotong MA Slow ke atas) → mulai BUY grid
   Death Cross  (MA Fast memotong MA Slow ke bawah) → mulai SELL grid
   Bot bisa punya BUY grid DAN SELL grid aktif sekaligus
@@ -118,7 +119,7 @@ LAYER 5 — RISK SHUTDOWN
 | Multiplier | 1.5 | double | Pengali lot setiap level grid baru |
 | Grid Step | 250 | int | Jarak dalam pips antar level grid |
 | General TP | 200 | int | Take profit keseluruhan dalam pips |
-| Orders per Step | 1 | int | Jumlah order yang dibuka per level grid |
+| Orders per Step | 2 | int | Jumlah order yang dibuka per level grid (Yetti = 2, Apex default = 1) |
 
 ### MA Entry Signal
 | Parameter | Value | Tipe | Keterangan |
@@ -164,7 +165,7 @@ LAYER 5 — RISK SHUTDOWN
 
 | Fitur | Alasan Exclude |
 |-------|----------------|
-| News Filter | Butuh koneksi internet real-time + wininet.dll, terlalu kompleks untuk v1.0 |
+| News Filter | ⚠️ **Yetti PAKAI News Filter (true), 30m before + 60m after.** Belum diimplement di Apex karena butuh wininet.dll. PRIORITAS TINGGI untuk v1.1 |
 | Sinyal Eksternal (smart921) | Kita pakai MA Crossover sebagai pengganti sinyal entry |
 | Locking System | Disabled di Yetti asli, skip untuk v1.0 |
 | AutoDryer | Disabled di Yetti asli, skip untuk v1.0 |
@@ -194,6 +195,9 @@ LAYER 5 — RISK SHUTDOWN
 ```
 0.10 → 0.15 → 0.23 → 0.34 → 0.51 → 0.76 → 1.14
 (semua dikonfirmasi dari log MT4 Yetti yang sedang live)
+
+⚠️ Yetti buka 2 ORDER per level (OrdersPerStep=2),
+   jadi total lot per level = 2 × nilai di atas
 ```
 
 ### Comment Format di Order:
@@ -204,6 +208,36 @@ LAYER 5 — RISK SHUTDOWN
 "Apex Grid SELL"   ← level 0
 "Apex Grid SELL 1" ← level 1
 ```
+
+### Fitur Yetti yang Belum Ada di Apex:
+| Fitur | Prioritas | Keterangan |
+|---|---|---|
+| **News Filter** | TINGGI | 30m sebelum + 60m setelah news, Yetti tidak trading |
+| **Bollinger Bands entry** | TINGGI | Observasi visual di chart Yetti |
+| **OrdersPerStep = 2** | TINGGI | Yetti buka 2 order per level grid |
+| **Re-trade grid before time change** | SEDANG | Yetti buka ulang grid sebelum sesi ganti |
+| **Profit taking %** | SEDANG | Yetti punya fitur take equity 2.12% |
+
+### Dokumentasi Referensi:
+- **Parameter Yetti definitif:** `yetti_parameter.md` (dicatat dari server live, 12 Juni 2026)
+- **Kinerja Yetti live:** `yetti_performance_summary.md` (dari laporan All History, 15 Juni 2026)
+
+### Benchmark Yetti Live (Target ApexGrid):
+
+| Metrik | Yetti (Live, 9 bln) | Apex (Backtest, 2.5 thn) |
+|---|---|---|
+| Total Trade | **1,215** | 12 |
+| Profit Factor | 3.08 | 30.55 |
+| Max Drawdown | **3.44%** | 14.03% |
+| Win Rate | 68.89% | 83.33% |
+| Avg Win : Avg Loss | $79.82 : $57.35 | $379 : $62 |
+| Frekuensi/Bulan | **135 trade** | 0.4 trade |
+| Lot Maksimum | 5.77 (level 10) | 0.33 (level 3) |
+| Orders/Level | **2** | 1 |
+| Stop Loss | ✅ (level 10 [sl]) | ❌ |
+| News Filter | ✅ Aktif | ❌ |
+
+> **Kesenjangan terbesar:** Frekuensi trade (337×), kedalaman grid (level 10 vs 3), dan News Filter.
 
 ---
 
@@ -229,11 +263,12 @@ v1.03f1 — Fix: RefreshRates bail-out dihapus (block order di Strategy Tester)
 v1.03f2 — Fix: margin level default 0 → DBL_MAX (trigger STOP_MARGIN tanpa posisi)
 v1.03f3 — Fix: iTime() → Time[] (bar guard silent fail saat history desync)
 v1.03f4 — Fix: OrderDelete return unchecked, tickets[] uninitialized (compiler warnings)
+v1.04 — Yetti-aligned: OrdersPerStep=2, MaxGridLevel+StopLoss, Bollinger Bands entry filter, cooldown=0, daily reset all stop reasons
 ```
 
 ### File Status:
 ```
-ApexGrid.mq4                    : ✅ Dibuat (v1.03, 739 baris)
+ApexGrid.mq4                    : ✅ Dibuat (v1.04, 765 baris)
 strategy.md                     : ✅ Dibuat
 parameters.md                   : ✅ Dibuat
 user-guide.md                   : ✅ Dibuat
@@ -263,5 +298,5 @@ proses_debug.md                 : ✅ Dibuat
 
 ---
 
-*Last updated: 12 Juni 2026 — AI Project Manager (audit rutin)*
+*Last updated: 15 Juni 2026 — Tambah benchmark Yetti live (1,215 trade, PF 3.08, DD 3.44%), kinerja summary, gap analysis*
 *Update dokumen ini setiap kali ada perubahan signifikan pada arsitektur atau progress*
