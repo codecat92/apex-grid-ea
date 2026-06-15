@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -18,7 +18,6 @@ extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 200;    // TP keseluruhan (pips)
 extern int    OrdersPerStep     = 2;      // Jumlah order per level
 extern int    MaxGridLevel      = 10;     // Batas maksimum level grid
-extern bool   UseLevelStopLoss  = false;  // Pasang SL di level maksimum
 
 //+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL PARAMETERS                                       |
@@ -29,7 +28,6 @@ extern int    MAMethod          = 0;      // 0=SMA,1=EMA,2=SMMA,3=LWMA
 extern int    MAPrice           = 0;      // 0=Close,1=Open,2=High,3=Low,4=Median,5=Typical,6=Weighted
 extern int    BBPeriod          = 20;     // Periode Bollinger Bands
 extern double BBDeviation       = 2.0;    // Deviasi Bollinger Bands
-extern bool   UseBBFilter       = true;   // Aktifkan filter Bollinger Bands
 
 //+------------------------------------------------------------------+
 //| TRAILING EXIT PARAMETERS                                         |
@@ -327,10 +325,10 @@ void OpenGridLevel(string side) {
       RefreshRates();
       double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
       double sl = 0;
-      if (UseLevelStopLoss && level >= MaxGridLevel) {
-         if (side == "BUY") sl = price - GridStep * PipSize();
-         else               sl = price + GridStep * PipSize();
-      }
+      if (side == "BUY")
+         sl = price - (GridStep * 2 * PipSize());
+      else
+         sl = price + (GridStep * 2 * PipSize());
       int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, 0, cmt, G_Magic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
@@ -341,10 +339,10 @@ void OpenGridLevel(string side) {
             RefreshRates();
             double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
             double sl2 = 0;
-            if (UseLevelStopLoss && level >= MaxGridLevel) {
-               if (side == "BUY") sl2 = mktPrice - GridStep * PipSize();
-               else               sl2 = mktPrice + GridStep * PipSize();
-            }
+            if (side == "BUY")
+               sl2 = mktPrice - (GridStep * 2 * PipSize());
+            else
+               sl2 = mktPrice + (GridStep * 2 * PipSize());
             ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
                                lot, mktPrice, slip, sl2, 0, cmt, G_Magic, 0, CLR_NONE);
             if (ticket >= 0) anySucceeded = true;
@@ -581,18 +579,13 @@ void CheckMA() {
    bool goldenCross = (!G_BuyActive && fast2 <= slow2 && fast1 > slow1);
    bool deathCross  = (!G_SellActive && fast2 >= slow2 && fast1 < slow1);
 
-   bool bbBuyOk = true;
-   bool bbSellOk = true;
+   double bbUpper = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_UPPER, 1);
+   double bbLower = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_LOWER, 1);
 
-   if (UseBBFilter && BBPeriod > 0) {
-      double bbUpper = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_UPPER, 1);
-      double bbLower = iBands(Symbol(), 0, BBPeriod, BBDeviation, 0, PRICE_CLOSE, MODE_LOWER, 1);
+   if (bbUpper <= 0 || bbLower <= 0) return;
 
-      if (bbUpper > 0 && bbLower > 0) {
-         bbBuyOk  = (Low[1] <= bbLower || Close[1] <= bbLower);
-         bbSellOk = (High[1] >= bbUpper || Close[1] >= bbUpper);
-      }
-   }
+   bool bbBuyOk  = (Low[1] <= bbLower || Close[1] <= bbLower);
+   bool bbSellOk = (High[1] >= bbUpper || Close[1] >= bbUpper);
 
    if (goldenCross && bbBuyOk) {
       if (G_BuyLastClosed == 0 || TimeCurrent() - G_BuyLastClosed >= cooldownSec) {
