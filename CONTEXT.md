@@ -69,7 +69,7 @@ apex-grid-ea/
 
 ---
 
-## 4. Arsitektur Bot — 5 Layer
+## 4. Arsitektur Bot — 6 Layer
 
 ```
 LAYER 1 — ENTRY SIGNAL
@@ -103,8 +103,16 @@ LAYER 4 — TIME FILTER
   Ada extra trading window di awal sesi
 
 LAYER 5 — RISK SHUTDOWN
-  Monitor drawdown, margin level, profit harian/mingguan
-  Jika batas terlampaui → stop trading atau close all
+   Monitor drawdown, margin level, profit harian/mingguan
+   Jika batas terlampaui → stop trading atau close all
+
+LAYER 6 — NEWS FILTER (v1.07)
+   Mencegah entry saat rilis berita ekonomi penting (Forexfactory)
+   news_fetcher.py (Python/exe) scrape calendar → pipe-delimited file
+   MQL4 baca file, hitung blackout window (N menit before + M menit after)
+   Currency filter: user pilih mata uang mana yang dimonitor
+   Fail-open: jika file corrupt/tidak ada, EA tetap trading normal
+   Lihat docs/news-filter-setup.md untuk panduan lengkap
 ```
 
 ---
@@ -159,13 +167,23 @@ LAYER 5 — RISK SHUTDOWN
 | Max Drawdown | 15 | double | Batas drawdown sebelum bot berhenti |
 | Min Margin Level | 1000 | double | Batas minimum margin level |
 
+### News Filter (v1.07)
+| Parameter | Value | Tipe | Keterangan |
+|-----------|-------|------|------------|
+| News Filter | false | bool | Aktifkan news filter |
+| News Minutes Before | 30 | int | Menit sebelum news rilis (no entry) |
+| News Minutes After | 60 | int | Menit setelah news rilis (no entry) |
+| News Refresh Min | 15 | int | Interval refresh baca file news (menit) |
+| News Currencies | USD,EUR,GBP,... | string | Daftar mata uang yang dimonitor (koma) |
+| News Timezone Offset | 0 | int | Offset jam broker dari UTC |
+
 ---
 
 ## 6. Yang Di-EXCLUDE (dan Alasannya)
 
 | Fitur | Alasan Exclude |
 |-------|----------------|
-| News Filter | ⚠️ **Yetti PAKAI News Filter (true), 30m before + 60m after.** Belum diimplement di Apex karena butuh wininet.dll. PRIORITAS TINGGI untuk v1.1 |
+| News Filter | ✅ **SUDAH DIIMPLEMENT v1.07.** 30m before + 60m after. Butuh news_fetcher.py (Python) atau news_fetcher.exe (PyInstaller) + Windows Scheduler |
 | Sinyal Eksternal (smart921) | Kita pakai MA Crossover sebagai pengganti sinyal entry |
 | Locking System | Disabled di Yetti asli, skip untuk v1.0 |
 | AutoDryer | Disabled di Yetti asli, skip untuk v1.0 |
@@ -212,32 +230,29 @@ LAYER 5 — RISK SHUTDOWN
 ### Fitur Yetti yang Belum Ada di Apex:
 | Fitur | Prioritas | Keterangan |
 |---|---|---|
-| **News Filter** | TINGGI | 30m sebelum + 60m setelah news, Yetti tidak trading |
-| **Bollinger Bands entry** | TINGGI | Observasi visual di chart Yetti |
-| **OrdersPerStep = 2** | TINGGI | Yetti buka 2 order per level grid |
 | **Re-trade grid before time change** | SEDANG | Yetti buka ulang grid sebelum sesi ganti |
 | **Profit taking %** | SEDANG | Yetti punya fitur take equity 2.12% |
 
 ### Dokumentasi Referensi:
 - **Parameter Yetti definitif:** `yetti_parameter.md` (dicatat dari server live, 12 Juni 2026)
 - **Kinerja Yetti live:** `yetti_performance_summary.md` (dari laporan All History, 15 Juni 2026)
+- **Perbandingan Yetti vs Apex:** `perbandingan_yetti_vs_apex.md` (periode overlap Nov 2025–Jun 2026)
 
-### Benchmark Yetti Live (Target ApexGrid):
+### Benchmark Yetti Live vs Apex (Periode Overlap Nov 2025 – Jun 2026):
 
-| Metrik | Yetti (Live, 9 bln) | Apex (Backtest, 2.5 thn) |
-|---|---|---|
-| Total Trade | **1,215** | 12 |
-| Profit Factor | 3.08 | 30.55 |
-| Max Drawdown | **3.44%** | 14.03% |
-| Win Rate | 68.89% | 83.33% |
-| Avg Win : Avg Loss | $79.82 : $57.35 | $379 : $62 |
-| Frekuensi/Bulan | **135 trade** | 0.4 trade |
-| Lot Maksimum | 5.77 (level 10) | 0.33 (level 3) |
-| Orders/Level | **2** | 1 |
-| Stop Loss | ✅ (level 10 [sl]) | ❌ |
-| News Filter | ✅ Aktif | ❌ |
+| Metrik | Yetti (Live) | Apex (Backtest) | Gap |
+|---|---|---|---|
+| Total Trade | **965** | 36 | 26.8× |
+| Net Profit | **+$26,359** | +$3,864 | 6.8× |
+| Profit Factor | 2.51 | 2.61 | ✅ Setara |
+| Win Rate | 68.8% | 72.2% | ✅ Setara |
+| Frekuensi/Bulan | **125 trade** | 4.8 trade | 26× |
+| Max Consecutive Loss | 4 | 4 | ✅ SAMA |
+| Avg Win : Avg Loss | $66 : $59 | $241 : $239 | Rasio setara |
+| Auto-SL | ✅ Built-in | ✅ 375 pips | ✅ |
+| Stop Out | 0 | 0 | ✅ SAMA |
 
-> **Kesenjangan terbesar:** Frekuensi trade (337×), kedalaman grid (level 10 vs 3), dan News Filter.
+> **Gap terbesar:** Frekuensi entry (26×). Root cause: News Filter + Re-trade before time change belum diimplement.
 
 ---
 
@@ -250,7 +265,8 @@ Fase 2 — Basket Close/Trailing : ✅ Selesai (Layer 3)
 Fase 3 — Entry Signal (MA)     : ✅ Selesai (Layer 1)
 Fase 4 — Time Filter           : ✅ Selesai (Layer 4)
 Fase 5 — Risk Shutdown         : ✅ Selesai (Layer 5)
-Fase 6 — Testing & Dokumentasi : ⏳ Perlu testing di MT4
+Fase 6 — Testing & Dokumentasi : ✅ Selesai (7 backtest, perbandingan Yetti, laporan final)
+Fase 7 — News Filter           : ✅ Selesai — v1.07, branch feat/news-filter (Layer 6)
 ```
 
 ### Changelog Ringkas:
@@ -264,17 +280,28 @@ v1.03f2 — Fix: margin level default 0 → DBL_MAX (trigger STOP_MARGIN tanpa p
 v1.03f3 — Fix: iTime() → Time[] (bar guard silent fail saat history desync)
 v1.03f4 — Fix: OrderDelete return unchecked, tickets[] uninitialized (compiler warnings)
 v1.04 — Yetti-aligned: OrdersPerStep=2, MaxGridLevel+StopLoss, Bollinger Bands entry filter, cooldown=0, daily reset all stop reasons
+v1.06 — StopLossPips extern (375 pips), ganti hardcoded GridStep*2 jadi konfigurable
+v1.07 — News Filter (Layer 6): news_fetcher.py scrape Forexfactory, blackout window
+         before/after news, currency filter, fail-open architecture
 ```
 
 ### File Status:
 ```
-ApexGrid.mq4                    : ✅ Dibuat (v1.04, 765 baris)
+ApexGrid.mq4                    : ✅ Dibuat (v1.07, ~900 baris)
 strategy.md                     : ✅ Dibuat
 parameters.md                   : ✅ Dibuat
 user-guide.md                   : ✅ Dibuat
+news-filter-setup.md            : ✅ Dibuat (panduan setup News Filter)
+news_fetcher.py                 : ✅ Dibuat (scraper Forexfactory calendar + PyInstaller spec)
 report_modul_non_technical.md   : ✅ Dibuat
 penjelasan_kode_apexGrid.md     : ✅ Dibuat
 proses_debug.md                 : ✅ Dibuat
+yetti_parameter.md              : ✅ Dibuat (parameter Yetti dari server live)
+yetti_performance_summary.md    : ✅ Dibuat (kinerja Yetti 1,215 trade)
+perbandingan_yetti_vs_apex.md   : ✅ Dibuat (analisis periode overlap)
+hasil_testing_apex-grid.md      : ✅ Dibuat (laporan 4 test awal)
+laporan-testing_Senin-15-Juni-2026.md : ✅ Dibuat (laporan harian PM)
+Apex_progress_report.md         : ✅ Dibuat (progress report untuk klien)
 ```
 
 ---
@@ -298,5 +325,5 @@ proses_debug.md                 : ✅ Dibuat
 
 ---
 
-*Last updated: 15 Juni 2026 — Tambah benchmark Yetti live (1,215 trade, PF 3.08, DD 3.44%), kinerja summary, gap analysis*
+*Last updated: 23 Juni 2026 — v1.07 News Filter implementasi, branch feat/news-filter, multi-source scraper + fail-open architecture*
 *Update dokumen ini setiap kali ada perubahan signifikan pada arsitektur atau progress*

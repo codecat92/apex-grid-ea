@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.06"
+#property version   "1.07"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -61,6 +61,16 @@ extern double MaxDrawdown       = 15.0;   // Batas drawdown sebelum berhenti
 extern double MinMarginLevel    = 1000.0; // Batas minimum margin level
 
 //+------------------------------------------------------------------+
+//| NEWS FILTER PARAMETERS                                           |
+//+------------------------------------------------------------------+
+extern bool   NewsFilter         = false;   // Aktifkan news filter
+extern int    NewsMinutesBefore  = 30;      // Menit sebelum news (no entry)
+extern int    NewsMinutesAfter   = 60;      // Menit setelah news (no entry)
+extern int    NewsRefreshMin     = 15;      // Interval refresh file news (menit)
+extern string NewsCurrencies     = "USD,EUR,GBP,CHF,CAD,AUD,NZD,JPY"; // Filter mata uang
+extern int    NewsTimezoneOffset = 0;       // Offset jam UTC ke broker time (contoh: 2, -5)
+
+//+------------------------------------------------------------------+
 //| STOP REASON CONSTANTS                                            |
 //+------------------------------------------------------------------+
 #define STOP_NONE      0
@@ -106,6 +116,14 @@ datetime G_DayStart        = 0;
 datetime G_WeekStart       = 0;
 double   G_DayEquity       = 0;
 double   G_WeekEquity      = 0;
+
+//+------------------------------------------------------------------+
+//| NEWS FILTER STATE                                                |
+//+------------------------------------------------------------------+
+datetime G_NewsLastFetch   = 0;
+int      G_NewsEventCount  = 0;
+datetime G_NewsBlackouts[][2];  // [n][0]=start, [n][1]=end in broker time
+bool     G_NewsDataValid   = false;
 
 //+------------------------------------------------------------------+
 //| Helper: Get true pip value                                       |
@@ -167,6 +185,7 @@ int CurrentGridStep() {
 //+------------------------------------------------------------------+
 bool IsTradingAllowed() {
    if (G_Stopped) return false;
+   if (NewsFilter && IsNewsBlackout()) return false;
    int dow = DayOfWeek();
    if (dow == 0 || dow == 6) return false;
    int now = Hour() * 60 + Minute();
@@ -688,6 +707,135 @@ void CheckRisk() {
 }
 
 //+------------------------------------------------------------------+
+//| NEWS FETCHER — Read news_cache.txt pipe-delimited file           |
+//| Format: 2026-06-23T14:00:00Z|USD|High                             |
+//| Returns true if data was refreshed successfully                   |
+//+------------------------------------------------------------------+
+bool FetchNewsFromFile() {
+   if (!NewsFilter) {
+      G_NewsDataValid = false;
+      return false;
+   }
+
+   // Throttle: only refresh every NewsRefreshMin minutes
+   if (G_NewsLastFetch > 0 && TimeCurrent() - G_NewsLastFetch < NewsRefreshMin * 60) {
+      return G_NewsDataValid;
+   }
+
+   int h = FileOpen("news_cache.txt", FILE_READ|FILE_TXT|FILE_COMMON);
+   if (h == INVALID_HANDLE) {
+      G_NewsLastFetch = TimeCurrent();
+      G_NewsDataValid = false;
+      if (G_NewsEventCount > 0) {
+         Print(G_Name + " News: file not found, clearing cache");
+      }
+      G_NewsEventCount = 0;
+      return false;
+   }
+
+   string line;
+   int count = 0;
+   int offsetSec = NewsTimezoneOffset * 3600;
+
+   // First pass: count valid events
+   int validCount = 0;
+   while (!FileIsEnding(h)) {
+      line = FileReadString(h);
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      if (line == "" || StringGetChar(line, 0) == '#') continue;
+
+      string dtStr  = StringSubstr(line, 0, 20);
+      string ccStr  = "";
+
+      int sep1 = StringFind(line, "|", 20);
+      if (sep1 < 0) continue;
+      int sep2 = StringFind(line, "|", sep1 + 1);
+      if (sep2 < 0) continue;
+
+      ccStr = StringSubstr(line, sep1 + 1, sep2 - sep1 - 1);
+
+      // Check currency filter
+      if (StringLen(NewsCurrencies) > 0 && StringFind(NewsCurrencies, ccStr) < 0) continue;
+
+      string dtFixed = StringSubstr(dtStr, 0, 4) + "." +
+                       StringSubstr(dtStr, 5, 2) + "." +
+                       StringSubstr(dtStr, 8, 2) + " " +
+                       StringSubstr(dtStr, 11, 2) + ":" +
+                       StringSubstr(dtStr, 14, 2) + ":" +
+                       StringSubstr(dtStr, 17, 2);
+      datetime utc = StrToTime(dtFixed);
+      if (utc <= 0) continue;
+
+      validCount++;
+   }
+
+   FileSeek(h, 0, SEEK_SET);
+   ArrayResize(G_NewsBlackouts, validCount);
+   count = 0;
+
+   while (!FileIsEnding(h) && count < validCount) {
+      line = FileReadString(h);
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      if (line == "" || StringGetChar(line, 0) == '#') continue;
+
+      string dtStr = StringSubstr(line, 0, 20);
+      string ccStr = "";
+
+      int sep1 = StringFind(line, "|", 20);
+      if (sep1 < 0) continue;
+      int sep2 = StringFind(line, "|", sep1 + 1);
+      if (sep2 < 0) continue;
+      ccStr = StringSubstr(line, sep1 + 1, sep2 - sep1 - 1);
+
+      if (StringLen(NewsCurrencies) > 0 && StringFind(NewsCurrencies, ccStr) < 0) continue;
+
+      string dtFixed = StringSubstr(dtStr, 0, 4) + "." +
+                       StringSubstr(dtStr, 5, 2) + "." +
+                       StringSubstr(dtStr, 8, 2) + " " +
+                       StringSubstr(dtStr, 11, 2) + ":" +
+                       StringSubstr(dtStr, 14, 2) + ":" +
+                       StringSubstr(dtStr, 17, 2);
+      datetime utc = StrToTime(dtFixed);
+      if (utc <= 0) continue;
+
+      // Convert UTC to broker time via offset
+      datetime brokerEvent = utc + offsetSec;
+
+      G_NewsBlackouts[count][0] = brokerEvent - (NewsMinutesBefore * 60);
+      G_NewsBlackouts[count][1] = brokerEvent + (NewsMinutesAfter  * 60);
+      count++;
+   }
+
+   FileClose(h);
+   G_NewsLastFetch  = TimeCurrent();
+   G_NewsEventCount = count;
+   G_NewsDataValid  = (count > 0);
+
+   if (count > 0) {
+      Print(G_Name + " News: loaded ", count, " events, blackouts active");
+   }
+   return G_NewsDataValid;
+}
+
+//+------------------------------------------------------------------+
+//| NEWS BLACKOUT CHECK                                              |
+//| Returns true if current broker time falls in any blackout window |
+//+------------------------------------------------------------------+
+bool IsNewsBlackout() {
+   if (!NewsFilter || !G_NewsDataValid) return false;
+
+   for (int i = 0; i < G_NewsEventCount; i++) {
+      if (G_NewsBlackouts[i][0] <= 0 || G_NewsBlackouts[i][1] <= 0) continue;
+      if (TimeCurrent() >= G_NewsBlackouts[i][0] && TimeCurrent() <= G_NewsBlackouts[i][1]) {
+         return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Reset daily/weekly equity tracking                               |
 //+------------------------------------------------------------------+
 void CheckReset() {
@@ -744,6 +892,9 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void OnTick() {
    CheckReset();
+
+   // Fetch news data periodically (Layer 6)
+   FetchNewsFromFile();
 
    // Risk and exit always run — positions must be managed even when stopped
    ManagePendingOrders();
