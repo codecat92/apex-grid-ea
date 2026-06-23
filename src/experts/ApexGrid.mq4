@@ -66,7 +66,7 @@ extern double MinMarginLevel    = 1000.0; // Batas minimum margin level
 extern bool   NewsFilter         = false;   // Aktifkan news filter
 extern int    NewsMinutesBefore  = 30;      // Menit sebelum news (no entry)
 extern int    NewsMinutesAfter   = 60;      // Menit setelah news (no entry)
-extern int    NewsRefreshMin     = 15;      // Interval refresh file news (menit)
+extern int    NewsRefreshMin     = 15;      // Interval refresh data news via web (menit)
 extern string NewsCurrencies     = "USD,EUR,GBP,CHF,CAD,AUD,NZD,JPY"; // Filter mata uang
 extern int    NewsTimezoneOffset = 0;       // Offset jam UTC ke broker time (contoh: 2, -5)
 
@@ -707,11 +707,57 @@ void CheckRisk() {
 }
 
 //+------------------------------------------------------------------+
-//| NEWS FETCHER — Read news_cache.txt pipe-delimited file           |
-//| Format: 2026-06-23T14:00:00Z|USD|High                             |
-//| Returns true if data was refreshed successfully                   |
+//| NEWS PARSER — Parse ISO 8601 date to UTC datetime                |
+//| Format: 2026-06-23T03:15:00-04:00 → returns UTC datetime         |
 //+------------------------------------------------------------------+
-bool FetchNewsFromFile() {
+datetime ParseISODate(string iso) {
+   if (StringLen(iso) < 19) return 0;
+
+   int y  = (int)StringToInteger(StringSubstr(iso, 0, 4));
+   int mo = (int)StringToInteger(StringSubstr(iso, 5, 2));
+   int d  = (int)StringToInteger(StringSubstr(iso, 8, 2));
+   int h  = (int)StringToInteger(StringSubstr(iso, 11, 2));
+   int mi = (int)StringToInteger(StringSubstr(iso, 14, 2));
+   int s  = (int)StringToInteger(StringSubstr(iso, 17, 2));
+
+   string dtStr = StringFormat("%04d.%02d.%02d %02d:%02d:%02d", y, mo, d, h, mi, s);
+   datetime localDt = StrToTime(dtStr);
+   if (localDt <= 0) return 0;
+
+   // Parse timezone offset: -04:00 or +05:00
+   string tzSign = StringSubstr(iso, 19, 1);
+   if (tzSign != "+" && tzSign != "-") return localDt;
+
+   int tzHours = (int)StringToInteger(StringSubstr(iso, 20, 2));
+   int tzSec = tzHours * 3600;
+   if (tzSign == "-") tzSec = -tzSec;
+
+   // UTC = local time minus the timezone offset
+   // E.g. 03:15-04:00 → UTC = 03:15 - (-14400) = 03:15 + 4h = 07:15
+   return localDt - tzSec;
+}
+
+//+------------------------------------------------------------------+
+//| Map country code from JSON to ISO currency code                  |
+//+------------------------------------------------------------------+
+string CountryToCurrency(string country) {
+   if (country == "US" || country == "USD") return "USD";
+   if (country == "EU" || country == "EUR") return "EUR";
+   if (country == "GB" || country == "GBP") return "GBP";
+   if (country == "CH" || country == "CHF") return "CHF";
+   if (country == "CA" || country == "CAD") return "CAD";
+   if (country == "AU" || country == "AUD") return "AUD";
+   if (country == "NZ" || country == "NZD") return "NZD";
+   if (country == "JP" || country == "JPY") return "JPY";
+   if (country == "CN" || country == "CNY") return "CNY";
+   return country;
+}
+
+//+------------------------------------------------------------------+
+//| NEWS FETCHER — Fetch calendar JSON via WebRequest                |
+//| Source: nfs.faireconomy.media (Fair Economy, Inc. JSON endpoint) |
+//+------------------------------------------------------------------+
+bool FetchNewsViaWeb() {
    if (!NewsFilter) {
       G_NewsDataValid = false;
       return false;
@@ -722,100 +768,103 @@ bool FetchNewsFromFile() {
       return G_NewsDataValid;
    }
 
-   int h = FileOpen("news_cache.txt", FILE_READ|FILE_TXT|FILE_COMMON);
-   if (h == INVALID_HANDLE) {
-      G_NewsLastFetch = TimeCurrent();
+   string url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+   char data[], result[];
+   string headers;
+
+   G_NewsLastFetch = TimeCurrent();
+
+   int status = WebRequest("GET", url, NULL, NULL, 5000, data, 0, result, headers);
+
+   if (status != 200) {
       G_NewsDataValid = false;
-      if (G_NewsEventCount > 0) {
-         Print(G_Name + " News: file not found, clearing cache");
-      }
+      G_NewsEventCount = 0;
+      if (status == -1)
+         Print(G_Name + " News: WebRequest failed — check Tools→Options→Expert Advisors→Allow WebRequest for ", url);
+      else
+         Print(G_Name + " News: HTTP ", status);
+      return false;
+   }
+
+   string json = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   if (StringLen(json) < 100) {
+      G_NewsDataValid = false;
       G_NewsEventCount = 0;
       return false;
    }
 
-   string line;
-   int count = 0;
+   // Parse JSON events — search for "date":"..." and "country":"..." pairs
    int offsetSec = NewsTimezoneOffset * 3600;
+   datetime now = TimeCurrent();
+   int count = 0;
+   int searchPos = 0;
 
-   // First pass: count valid events
-   int validCount = 0;
-   while (!FileIsEnding(h)) {
-      line = FileReadString(h);
-      StringTrimLeft(line);
-      StringTrimRight(line);
-      if (line == "" || StringGetChar(line, 0) == '#') continue;
+   // Reserve max 100 slots
+   ArrayResize(G_NewsBlackouts, 100);
 
-      string dtStr  = StringSubstr(line, 0, 20);
-      string ccStr  = "";
+   while (count < 100) {
+      // Find next date key
+      int dateKey = StringFind(json, "\"date\":", searchPos);
+      if (dateKey < 0) break;
 
-      int sep1 = StringFind(line, "|", 20);
-      if (sep1 < 0) continue;
-      int sep2 = StringFind(line, "|", sep1 + 1);
-      if (sep2 < 0) continue;
+      // Extract date value between quotes
+      int dateStart = StringFind(json, "\"", dateKey + 7) + 1;
+      if (dateStart <= 0) break;
+      int dateEnd = StringFind(json, "\"", dateStart);
+      if (dateEnd < 0) break;
+      string dateStr = StringSubstr(json, dateStart, dateEnd - dateStart);
 
-      ccStr = StringSubstr(line, sep1 + 1, sep2 - sep1 - 1);
+      // Find next country key (within 200 chars of date end)
+      int countryKey = StringFind(json, "\"country\":", dateEnd);
+      if (countryKey < 0 || countryKey > dateEnd + 200) {
+         searchPos = dateEnd;
+         continue;
+      }
+      int countryStart = StringFind(json, "\"", countryKey + 11) + 1;
+      if (countryStart <= 0) { searchPos = dateEnd; continue; }
+      int countryEnd = StringFind(json, "\"", countryStart);
+      if (countryEnd < 0) { searchPos = dateEnd; continue; }
+      string countryStr = StringSubstr(json, countryStart, countryEnd - countryStart);
 
-      // Check currency filter
-      if (StringLen(NewsCurrencies) > 0 && StringFind(NewsCurrencies, ccStr) < 0) continue;
+      // Currency filter
+      string currency = CountryToCurrency(countryStr);
+      if (StringLen(NewsCurrencies) > 0 && StringFind(NewsCurrencies, currency) < 0) {
+         searchPos = countryEnd;
+         continue;
+      }
 
-      string dtFixed = StringSubstr(dtStr, 0, 4) + "." +
-                       StringSubstr(dtStr, 5, 2) + "." +
-                       StringSubstr(dtStr, 8, 2) + " " +
-                       StringSubstr(dtStr, 11, 2) + ":" +
-                       StringSubstr(dtStr, 14, 2) + ":" +
-                       StringSubstr(dtStr, 17, 2);
-      datetime utc = StrToTime(dtFixed);
-      if (utc <= 0) continue;
+      // Parse ISO 8601 → UTC
+      datetime eventUtc = ParseISODate(dateStr);
+      if (eventUtc <= 0) {
+         searchPos = countryEnd;
+         continue;
+      }
 
-      validCount++;
-   }
+      // Skip past events (>1h old) and events beyond 2 days
+      if (eventUtc < now - 3600 || eventUtc > now + 172800) {
+         searchPos = countryEnd;
+         continue;
+      }
 
-   FileSeek(h, 0, SEEK_SET);
-   ArrayResize(G_NewsBlackouts, validCount);
-   count = 0;
-
-   while (!FileIsEnding(h) && count < validCount) {
-      line = FileReadString(h);
-      StringTrimLeft(line);
-      StringTrimRight(line);
-      if (line == "" || StringGetChar(line, 0) == '#') continue;
-
-      string dtStr = StringSubstr(line, 0, 20);
-      string ccStr = "";
-
-      int sep1 = StringFind(line, "|", 20);
-      if (sep1 < 0) continue;
-      int sep2 = StringFind(line, "|", sep1 + 1);
-      if (sep2 < 0) continue;
-      ccStr = StringSubstr(line, sep1 + 1, sep2 - sep1 - 1);
-
-      if (StringLen(NewsCurrencies) > 0 && StringFind(NewsCurrencies, ccStr) < 0) continue;
-
-      string dtFixed = StringSubstr(dtStr, 0, 4) + "." +
-                       StringSubstr(dtStr, 5, 2) + "." +
-                       StringSubstr(dtStr, 8, 2) + " " +
-                       StringSubstr(dtStr, 11, 2) + ":" +
-                       StringSubstr(dtStr, 14, 2) + ":" +
-                       StringSubstr(dtStr, 17, 2);
-      datetime utc = StrToTime(dtFixed);
-      if (utc <= 0) continue;
-
-      // Convert UTC to broker time via offset
-      datetime brokerEvent = utc + offsetSec;
+      // Convert UTC to broker time
+      datetime brokerEvent = eventUtc + offsetSec;
 
       G_NewsBlackouts[count][0] = brokerEvent - (NewsMinutesBefore * 60);
       G_NewsBlackouts[count][1] = brokerEvent + (NewsMinutesAfter  * 60);
       count++;
+
+      searchPos = countryEnd;
    }
 
-   FileClose(h);
-   G_NewsLastFetch  = TimeCurrent();
+   ArrayResize(G_NewsBlackouts, count);
    G_NewsEventCount = count;
    G_NewsDataValid  = (count > 0);
 
-   if (count > 0) {
-      Print(G_Name + " News: loaded ", count, " events, blackouts active");
-   }
+   if (count > 0)
+      Print(G_Name + " News: loaded ", count, " events via WebRequest");
+   else
+      Print(G_Name + " News: 0 events in range (or API returned empty)");
+
    return G_NewsDataValid;
 }
 
@@ -894,7 +943,7 @@ void OnTick() {
    CheckReset();
 
    // Fetch news data periodically (Layer 6)
-   FetchNewsFromFile();
+   FetchNewsViaWeb();
 
    // Risk and exit always run — positions must be managed even when stopped
    ManagePendingOrders();

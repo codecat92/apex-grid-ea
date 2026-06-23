@@ -108,10 +108,11 @@ LAYER 5 — RISK SHUTDOWN
 
 LAYER 6 — NEWS FILTER (v1.07)
    Mencegah entry saat rilis berita ekonomi penting
-   news_fetcher.py fetch JSON dari nfs.faireconomy.media (Fair Economy, Inc.)
-   MQL4 baca pipe-delimited file, hitung blackout window
+   WebRequest() langsung ke nfs.faireconomy.media (Fair Economy, Inc.)
+   Tanpa aplikasi terpisah — semua di dalam EA
    Currency filter: user pilih mata uang mana yang dimonitor
-   Fail-open: jika fetch gagal/file corrupt, EA tetap trading normal
+   Fail-open: jika fetch gagal, EA tetap trading normal
+   Setup user: Tools→Options→Expert Advisors→Allow WebRequest + centang NewsFilter
    Lihat docs/news-filter-setup.md untuk panduan lengkap
 ```
 
