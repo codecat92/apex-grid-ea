@@ -8,9 +8,13 @@ News Filter adalah fitur opsional yang mencegah bot entry posisi baru saat ada r
 
 | Komponen | File | Fungsi |
 |----------|------|--------|
-| **News Fetcher** | `src/tools/news_fetcher.py` | Scrape Forexfactory calendar → output `news_cache.txt` |
+| **News Fetcher** | `src/tools/news_fetcher.py` | Fetch JSON API dari nfs.faireconomy.media → output `news_cache.txt` |
 | **MQL4 Parser** | `src/experts/ApexGrid.mq4` (`FetchNewsFromFile()`) | Baca file, parse blackout windows |
 | **MQL4 Filter** | `src/experts/ApexGrid.mq4` (`IsNewsBlackout()`) | Blokir entry jika dalam blackout window |
+
+## Sumber Data
+
+Data diambil dari **nfs.faireconomy.media** — endpoint JSON milik Fair Economy, Inc. (perusahaan induk ForexFactory). Format ISO 8601 dengan timezone offset (`-04:00`), akurat, tanpa API key.
 
 ## Setup di Windows Server
 
@@ -19,7 +23,7 @@ News Filter adalah fitur opsional yang mencegah bot entry posisi baru saat ada r
 1. **Install Python 3.10+** di server
 2. **Install dependencies:**
    ```cmd
-   pip install requests beautifulsoup4 cloudscraper
+   pip install requests
    ```
 3. **Test manual:**
    ```cmd
@@ -77,7 +81,7 @@ Atau lihat di **Market Watch**, bandingkan dengan UTC sekarang.
 ## Cara Kerja
 
 1. **Windows Scheduler** menjalankan `news_fetcher.py` setiap 15 menit
-2. Script scrape ForexFactory, filter currency yang dipilih, tulis ke `news_cache.txt`
+2. Script fetch JSON dari `nfs.faireconomy.media`, filter currency yang dipilih, tulis ke `news_cache.txt`
 3. Format output (pipe-delimited):
    ```
    2026-06-23T14:00:00Z|USD|High
@@ -95,15 +99,11 @@ Atau lihat di **Market Watch**, bandingkan dengan UTC sekarang.
 - Di MT4 log: `Apex Grid News: file not found, clearing cache`
 - EA tetap trading normal tanpa filter (fail-open)
 
-### Data tidak match
+### Data tidak cocok / kosong
 - Cek apakah `NewsTimezoneOffset` sudah benar
 - Cek `NewsCurrencies` — pastikan tidak ada spasi (pakai koma tanpa spasi)
 - Cek log Python: `news_fetcher.log`
-
-### ForexFactory berubah struktur
-- Hanya perlu update `news_fetcher.py` (script Python), EA tidak perlu diupdate
-- Sumber fallback sudah disiapkan (JSON proxy → HTML scrape)
-- Selama Python belum diupdate, EA tetap trading normal
+- Jika API endpoint down atau rate-limited, file tetap ditulis dengan 0 events → EA trading normal
 
 ## Arsitektur Fail-Open
 

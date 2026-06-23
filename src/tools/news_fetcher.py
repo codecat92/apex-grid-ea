@@ -2,29 +2,22 @@
 """
 Apex Grid EA — ForexFactory News Fetcher
 =========================================
-Fetches economic calendar data from ForexFactory and writes a JSON cache file
-for the Apex Grid EA to read via MQL4 FileRead.
+Fetches economic calendar data from nfs.faireconomy.media (Fair Economy, Inc.)
+and writes a JSON cache + pipe-delimited text file for the Apex Grid EA.
 
 USAGE:
     python news_fetcher.py [--output PATH] [--currencies USD,EUR,GBP] [--log PATH]
 
-OUTPUT (news_cache.json):
-    {
-      "fetched_at": "2026-06-23 08:30:00",
-      "source": "nfs.faireconomy.media",
-      "events": [
-        {"datetime": "2026-06-23T14:00:00Z", "currency": "USD",
-         "event_name": "FOMC Minutes", "impact": "High"}
-      ]
-    }
+OUTPUT:
+    news_cache.json  — JSON (human-readable / debug)
+    news_cache.txt   — Pipe-delimited for MQL4 (datetime|currency|impact)
 
-FALLBACK CHAIN:
-    1. nfs.faireconomy.media JSON (community proxy)
-    2. Forexfactory HTML scrape via cloudscraper + BeautifulSoup
-    3. If all fail: write file with empty events array + error flag
+FAIL-OPEN:
+    If fetch fails or returns empty, files are still written with 0 events.
+    The EA will detect this and trade normally without news filter.
 
 SETUP:
-    pip install requests beautifulsoup4 cloudscraper
+    pip install requests
 
 BUILD EXE (for servers without Python):
     pip install pyinstaller
@@ -33,9 +26,7 @@ BUILD EXE (for servers without Python):
 
 import argparse
 import json
-import os
 import sys
-import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -45,9 +36,7 @@ from typing import Optional
 DEFAULT_OUTPUT = "news_cache.json"
 DEFAULT_CURRENCIES = ["USD", "EUR", "GBP", "CHF", "CAD", "AUD", "NZD", "JPY"]
 LOG_FILE = "news_fetcher.log"
-
-# Timezone: Forexfactory uses US Eastern (EST/EDT), DST-aware per-event
-
+API_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
 
 # ---------------------------------------------------------------------------
@@ -65,41 +54,34 @@ def log(msg: str, level: str = "INFO") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Source 1: nfs.faireconomy.media JSON
+# Data Fetching
 # ---------------------------------------------------------------------------
-def fetch_faireconomy_json() -> Optional[list]:
-    """Try the community JSON proxy. Returns list of event dicts or None."""
-    try:
-        import requests
-    except ImportError:
-        log("requests not installed; skipping Source 1", "WARN")
-        return None
+def fetch_calendar() -> list:
+    """Fetch and parse the Forexfactory calendar JSON. Returns list of events."""
+    import requests
 
-    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-    try:
-        log(f"Fetching {url} ...")
-        resp = requests.get(url, timeout=30, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        if resp.status_code != 200:
-            log(f"Source 1 returned HTTP {resp.status_code}", "WARN")
-            return None
+    log(f"Fetching {API_URL} ...")
+    resp = requests.get(API_URL, timeout=30, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
 
-        data = resp.json()
-        events = _parse_faireconomy(data)
-        if events:
-            log(f"Source 1 OK: {len(events)} events", "OK")
-            return events
-        else:
-            log("Source 1 returned empty event list", "WARN")
-            return None
-    except Exception as e:
-        log(f"Source 1 failed: {e}", "WARN")
-        return None
+    if resp.status_code != 200:
+        log(f"HTTP {resp.status_code}", "WARN")
+        return []
+
+    data = resp.json()
+    events = _parse_events(data)
+
+    if events:
+        log(f"OK: {len(events)} events", "OK")
+    else:
+        log("0 events in range (all past or too far future)", "WARN")
+
+    return events
 
 
-def _parse_faireconomy(data: list) -> list:
-    """Parse the faireconomy JSON structure into our standard event format."""
+def _parse_events(data: list) -> list:
+    """Parse the faireconomy JSON into our standard event format."""
     events = []
     now = datetime.utcnow()
     cutoff = now + timedelta(days=2)
@@ -118,7 +100,7 @@ def _parse_faireconomy(data: list) -> list:
             try:
                 dt_aware = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
                 dt_utc = datetime.utcfromtimestamp(dt_aware.timestamp())
-            except ValueError:
+            except (ValueError, OSError):
                 try:
                     dt_utc = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
@@ -127,14 +109,11 @@ def _parse_faireconomy(data: list) -> list:
                     except ValueError:
                         continue
 
-            # Skip past events older than 1 hour and events beyond 2 days
+            # Skip past events (>1h old) and events beyond 2 days
             if dt_utc < now - timedelta(hours=1) or dt_utc > cutoff:
                 continue
 
-            # Map country code to currency
             currency = _country_to_currency(country)
-
-            # Normalize impact
             impact = _normalize_impact(impact)
 
             events.append({
@@ -150,169 +129,9 @@ def _parse_faireconomy(data: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Source 2: Forexfactory HTML scrape
-# ---------------------------------------------------------------------------
-def fetch_forexfactory_html() -> Optional[list]:
-    """Scrape forexfactory.com/calendar HTML as fallback. Uses cloudscraper."""
-    try:
-        import cloudscraper
-        from bs4 import BeautifulSoup
-    except ImportError:
-        log("cloudscraper/bs4 not installed; skipping Source 2", "WARN")
-        return None
-
-    url = "https://www.forexfactory.com/calendar"
-    try:
-        log(f"Fetching {url} via cloudscraper ...")
-        scraper = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "windows", "mobile": False}
-        )
-        resp = scraper.get(url, timeout=45)
-        if resp.status_code != 200:
-            log(f"Source 2 returned HTTP {resp.status_code}", "WARN")
-            return None
-
-        events = _parse_forexfactory_html(resp.text)
-        if events:
-            log(f"Source 2 OK: {len(events)} events", "OK")
-            return events
-        else:
-            log("Source 2 returned empty event list", "WARN")
-            return None
-    except Exception as e:
-        log(f"Source 2 failed: {e}", "WARN")
-        return None
-
-
-def _parse_forexfactory_html(html: str) -> list:
-    """Parse Forexfactory calendar HTML into standard event format."""
-    from bs4 import BeautifulSoup
-    from datetime import timezone as dt_timezone
-
-    events = []
-    now = datetime.utcnow()
-    cutoff = now + timedelta(days=2)
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    table = soup.find("table", class_="calendar__table")
-    if not table:
-        log("Could not find calendar table in HTML", "WARN")
-        return events
-
-    rows = table.find_all("tr", class_="calendar__row")
-    current_date = None
-    last_time = None
-
-    for row in rows:
-        classes = row.get("class", [])
-        classes_str = " ".join(classes)
-
-        # Skip day-breaker rows (section headers like "Mon Jun 22")
-        if "calendar__row--day-breaker" in classes_str:
-            date_cell = row.find("td", class_="calendar__date")
-            if date_cell:
-                date_text = " ".join(date_cell.stripped_strings)
-                try:
-                    # Format: "Sun Jun 21"
-                    current_date = datetime.strptime(date_text, "%a %b %d")
-                    current_date = current_date.replace(year=now.year)
-                except ValueError:
-                    pass
-            continue
-
-        tds = row.find_all("td")
-        if len(tds) < 4:
-            continue
-
-        try:
-            is_new_day = "calendar__row--new-day" in classes_str
-            off = 1 if is_new_day else 0
-
-            # Update current_date from new-day rows (td[0] = date)
-            if is_new_day:
-                date_cell = tds[0]
-                date_text = " ".join(date_cell.stripped_strings)
-                try:
-                    current_date = datetime.strptime(date_text, "%a %b %d")
-                    current_date = current_date.replace(year=now.year)
-                except ValueError:
-                    pass
-
-            time_cell     = tds[off]
-            currency_cell = tds[off + 1]
-            impact_cell   = tds[off + 2]
-            event_cell    = tds[off + 3]
-
-            time_text = time_cell.get_text(strip=True)
-            currency = currency_cell.get_text(strip=True).upper()
-            name = event_cell.get_text(strip=True)
-
-            if not currency or not name:
-                continue
-
-            # Carry forward time from previous row if current is empty
-            if not time_text:
-                time_text = last_time
-            else:
-                last_time = time_text
-
-            if not time_text:
-                continue
-
-            # Parse time: "8:00am", "10:00am", "2:30pm"
-            try:
-                time_parsed = datetime.strptime(time_text.lower(),
-                                                "%I:%M%p").time()
-            except ValueError:
-                continue
-
-            if current_date is None:
-                continue
-
-            # Combine date + time into ET local datetime
-            dt_et = datetime.combine(current_date, time_parsed)
-
-            # Convert ET -> UTC. ET offset depends on DST.
-            # For the current week, use the offset from the event's own date.
-            # If event month is between Mar-Nov, assume EDT (-4); else EST (-5)
-            if 3 <= dt_et.month <= 11:
-                offset = timedelta(hours=4)  # EDT = UTC-4
-            else:
-                offset = timedelta(hours=5)  # EST = UTC-5
-            dt_utc = dt_et + offset  # ET + 4h or 5h = UTC
-
-            if dt_utc < now - timedelta(hours=1) or dt_utc > cutoff:
-                continue
-
-            # Parse impact from icon class
-            impact = "Low"
-            if impact_cell:
-                icon = impact_cell.find("span", class_="icon")
-                if icon:
-                    icon_cls = " ".join(icon.get("class", []))
-                    if "icon--ff-impact-red" in icon_cls:
-                        impact = "High"
-                    elif "icon--ff-impact-ora" in icon_cls:
-                        impact = "Medium"
-
-            events.append({
-                "datetime": dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "currency": currency,
-                "event_name": name,
-                "impact": _normalize_impact(impact),
-            })
-        except Exception:
-            continue
-
-    return events
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _country_to_currency(country: str) -> str:
-    """Map country code or name to ISO currency code."""
     mapping = {
         "US": "USD", "UNITED STATES": "USD", "USA": "USD",
         "EU": "EUR", "EUROZONE": "EUR", "EUROPEAN UNION": "EUR",
@@ -328,7 +147,6 @@ def _country_to_currency(country: str) -> str:
 
 
 def _normalize_impact(impact: str) -> str:
-    """Normalize impact string to High/Medium/Low."""
     impact = impact.strip().lower()
     if impact in ("high", "3", "red"):
         return "High"
@@ -338,7 +156,6 @@ def _normalize_impact(impact: str) -> str:
 
 
 def filter_events(events: list, currencies: list) -> list:
-    """Keep only events whose currency is in the allowed list."""
     if events is None:
         return []
     if not currencies:
@@ -354,43 +171,25 @@ def main():
     global LOG_FILE
 
     parser = argparse.ArgumentParser(description="Apex Grid News Fetcher")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT,
-                        help="Output JSON file path")
-    parser.add_argument("--currencies", default=",".join(DEFAULT_CURRENCIES),
-                        help="Comma-separated list of currency codes to filter")
-    parser.add_argument("--log", default=LOG_FILE,
-                        help="Log file path")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument("--currencies", default=",".join(DEFAULT_CURRENCIES))
+    parser.add_argument("--log", default=LOG_FILE)
     args = parser.parse_args()
 
     LOG_FILE = args.log
 
     currencies = [c.strip().upper() for c in args.currencies.split(",") if c.strip()]
 
-    log(f"Apex Grid News Fetcher started")
+    log("Apex Grid News Fetcher started")
     log(f"  output={args.output}  currencies={currencies}")
 
-    # --- Fallback chain ---
-    events: list = []
-    source = "none"
-
-    # Source 1
-    events = fetch_faireconomy_json()
-    if events:
-        source = "nfs.faireconomy.media"
-
-    # Source 2
-    if not events:
-        events = fetch_forexfactory_html()
-        if events:
-            source = "forexfactory.com (scrape)"
-
-    # --- Filter & Write ---
+    events = fetch_calendar()
     events = filter_events(events, currencies)
     events.sort(key=lambda e: e["datetime"])
 
     result = {
         "fetched_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": source,
+        "source": "nfs.faireconomy.media",
         "events_count": len(events),
         "events": events,
     }
@@ -403,7 +202,7 @@ def main():
         log(f"Failed to write JSON: {e}", "ERR")
         sys.exit(1)
 
-    # Write pipe-delimited text file for MQL4 (simple line-by-line parse)
+    # Write pipe-delimited text file for MQL4
     txt_path = args.output.replace(".json", ".txt")
     try:
         with open(txt_path, "w", encoding="utf-8") as f:
@@ -415,8 +214,7 @@ def main():
         log(f"Failed to write TXT: {e}", "ERR")
 
     if not events:
-        log("No events found (either no data or no events matching filter). "
-            "EA will trade normally without news filter.", "WARN")
+        log("No events found. EA will trade normally without news filter.", "WARN")
     else:
         log("Done.")
 

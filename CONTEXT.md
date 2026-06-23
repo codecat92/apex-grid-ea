@@ -107,11 +107,11 @@ LAYER 5 — RISK SHUTDOWN
    Jika batas terlampaui → stop trading atau close all
 
 LAYER 6 — NEWS FILTER (v1.07)
-   Mencegah entry saat rilis berita ekonomi penting (Forexfactory)
-   news_fetcher.py (Python/exe) scrape calendar → pipe-delimited file
-   MQL4 baca file, hitung blackout window (N menit before + M menit after)
+   Mencegah entry saat rilis berita ekonomi penting
+   news_fetcher.py fetch JSON dari nfs.faireconomy.media (Fair Economy, Inc.)
+   MQL4 baca pipe-delimited file, hitung blackout window
    Currency filter: user pilih mata uang mana yang dimonitor
-   Fail-open: jika file corrupt/tidak ada, EA tetap trading normal
+   Fail-open: jika fetch gagal/file corrupt, EA tetap trading normal
    Lihat docs/news-filter-setup.md untuk panduan lengkap
 ```
 
