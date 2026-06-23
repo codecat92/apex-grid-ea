@@ -1,2 +1,4 @@
 .DS_Store
 mql4-lsp-server
+__pycache__/
+news_fetcher.log
