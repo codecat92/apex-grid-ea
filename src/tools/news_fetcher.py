@@ -46,10 +46,8 @@ DEFAULT_OUTPUT = "news_cache.json"
 DEFAULT_CURRENCIES = ["USD", "EUR", "GBP", "CHF", "CAD", "AUD", "NZD", "JPY"]
 LOG_FILE = "news_fetcher.log"
 
-# Timezone: Forexfactory uses US Eastern (EST/EDT)
-# Events are displayed in ET. We convert to UTC for MQL4 consumption.
-# ET = UTC-5 (EST) / UTC-4 (EDT). We use a simple offset approach.
-US_EASTERN_OFFSET = -5  # EST default; -4 during EDT (Mar-Nov roughly)
+# Timezone: Forexfactory uses US Eastern (EST/EDT), DST-aware per-event
+
 
 
 # ---------------------------------------------------------------------------
@@ -116,20 +114,21 @@ def _parse_faireconomy(data: list) -> list:
             if not name or not country or not date_str:
                 continue
 
-            # Parse date
+            # Parse date (ISO 8601 with timezone, e.g. 2026-06-23T14:00:00-04:00)
             try:
-                dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
+                dt_aware = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
+                dt_utc = datetime.utcfromtimestamp(dt_aware.timestamp())
             except ValueError:
                 try:
-                    dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    dt_utc = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
                     try:
-                        dt = datetime.strptime(date_str, "%Y-%m-%d")
+                        dt_utc = datetime.strptime(date_str, "%Y-%m-%d")
                     except ValueError:
                         continue
 
             # Skip past events older than 1 hour and events beyond 2 days
-            if dt < now - timedelta(hours=1) or dt > cutoff:
+            if dt_utc < now - timedelta(hours=1) or dt_utc > cutoff:
                 continue
 
             # Map country code to currency
@@ -139,7 +138,7 @@ def _parse_faireconomy(data: list) -> list:
             impact = _normalize_impact(impact)
 
             events.append({
-                "datetime": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime": dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "currency": currency,
                 "event_name": name,
                 "impact": impact,
@@ -188,6 +187,7 @@ def fetch_forexfactory_html() -> Optional[list]:
 def _parse_forexfactory_html(html: str) -> list:
     """Parse Forexfactory calendar HTML into standard event format."""
     from bs4 import BeautifulSoup
+    from datetime import timezone as dt_timezone
 
     events = []
     now = datetime.utcnow()
@@ -195,66 +195,106 @@ def _parse_forexfactory_html(html: str) -> list:
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # FF calendar rows are in a table with class "calendar__table"
     table = soup.find("table", class_="calendar__table")
     if not table:
         log("Could not find calendar table in HTML", "WARN")
         return events
 
     rows = table.find_all("tr", class_="calendar__row")
+    current_date = None
+    last_time = None
+
     for row in rows:
+        classes = row.get("class", [])
+        classes_str = " ".join(classes)
+
+        # Skip day-breaker rows (section headers like "Mon Jun 22")
+        if "calendar__row--day-breaker" in classes_str:
+            date_cell = row.find("td", class_="calendar__date")
+            if date_cell:
+                date_text = " ".join(date_cell.stripped_strings)
+                try:
+                    # Format: "Sun Jun 21"
+                    current_date = datetime.strptime(date_text, "%a %b %d")
+                    current_date = current_date.replace(year=now.year)
+                except ValueError:
+                    pass
+            continue
+
+        tds = row.find_all("td")
+        if len(tds) < 4:
+            continue
+
         try:
-            # Get time
-            time_cell = row.find("td", class_="calendar__time")
-            if not time_cell:
-                continue
-            time_str = time_cell.get_text(strip=True)
+            is_new_day = "calendar__row--new-day" in classes_str
+            off = 1 if is_new_day else 0
 
-            # Get currency
-            currency_cell = row.find("td", class_="calendar__currency")
-            if not currency_cell:
-                continue
+            # Update current_date from new-day rows (td[0] = date)
+            if is_new_day:
+                date_cell = tds[0]
+                date_text = " ".join(date_cell.stripped_strings)
+                try:
+                    current_date = datetime.strptime(date_text, "%a %b %d")
+                    current_date = current_date.replace(year=now.year)
+                except ValueError:
+                    pass
+
+            time_cell     = tds[off]
+            currency_cell = tds[off + 1]
+            impact_cell   = tds[off + 2]
+            event_cell    = tds[off + 3]
+
+            time_text = time_cell.get_text(strip=True)
             currency = currency_cell.get_text(strip=True).upper()
-
-            # Get event name
-            event_cell = row.find("td", class_="calendar__event")
-            if not event_cell:
-                continue
             name = event_cell.get_text(strip=True)
 
-            # Get impact
-            impact_cell = row.find("td", class_="calendar__impact")
-            impact = "Low"
-            if impact_cell:
-                impact_spans = impact_cell.find_all("span", class_="impact")
-                filled = len([s for s in impact_spans
-                              if "impact--fill" in s.get("class", [])])
-                if filled >= 3:
-                    impact = "High"
-                elif filled >= 2:
-                    impact = "Medium"
-
-            # Build datetime
-            # FF times are in ET. We need the date (the row belongs to a day
-            # section). Find the parent day section.
-            date_str = _find_row_date(row)
-            if not date_str:
+            if not currency or not name:
                 continue
 
-            # Combine date + time, convert ET -> UTC
-            dt_str = f"{date_str} {time_str}"
-            try:
-                dt_local = datetime.strptime(dt_str, "%Y-%m-%d %I:%M%p")
-            except ValueError:
-                try:
-                    dt_local = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-                except ValueError:
-                    continue
+            # Carry forward time from previous row if current is empty
+            if not time_text:
+                time_text = last_time
+            else:
+                last_time = time_text
 
-            dt_utc = dt_local - timedelta(hours=US_EASTERN_OFFSET)
+            if not time_text:
+                continue
+
+            # Parse time: "8:00am", "10:00am", "2:30pm"
+            try:
+                time_parsed = datetime.strptime(time_text.lower(),
+                                                "%I:%M%p").time()
+            except ValueError:
+                continue
+
+            if current_date is None:
+                continue
+
+            # Combine date + time into ET local datetime
+            dt_et = datetime.combine(current_date, time_parsed)
+
+            # Convert ET -> UTC. ET offset depends on DST.
+            # For the current week, use the offset from the event's own date.
+            # If event month is between Mar-Nov, assume EDT (-4); else EST (-5)
+            if 3 <= dt_et.month <= 11:
+                offset = timedelta(hours=4)  # EDT = UTC-4
+            else:
+                offset = timedelta(hours=5)  # EST = UTC-5
+            dt_utc = dt_et + offset  # ET + 4h or 5h = UTC
 
             if dt_utc < now - timedelta(hours=1) or dt_utc > cutoff:
                 continue
+
+            # Parse impact from icon class
+            impact = "Low"
+            if impact_cell:
+                icon = impact_cell.find("span", class_="icon")
+                if icon:
+                    icon_cls = " ".join(icon.get("class", []))
+                    if "icon--ff-impact-red" in icon_cls:
+                        impact = "High"
+                    elif "icon--ff-impact-ora" in icon_cls:
+                        impact = "Medium"
 
             events.append({
                 "datetime": dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -266,24 +306,6 @@ def _parse_forexfactory_html(html: str) -> list:
             continue
 
     return events
-
-
-def _find_row_date(row) -> Optional[str]:
-    """Walk up the DOM to find the day-header's date."""
-    from bs4 import BeautifulSoup
-
-    current = row.parent if hasattr(row, 'parent') else row
-    for _ in range(10):
-        if current is None:
-            return None
-        if hasattr(current, 'find_previous'):
-            header = current.find_previous("tr", class_="calendar__day-header")
-            if header:
-                date_span = header.find("span", class_="date")
-                if date_span:
-                    return date_span.get_text(strip=True)
-        current = getattr(current, 'parent', None)
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +339,8 @@ def _normalize_impact(impact: str) -> str:
 
 def filter_events(events: list, currencies: list) -> list:
     """Keep only events whose currency is in the allowed list."""
+    if events is None:
+        return []
     if not currencies:
         return events
     allowed = [c.upper() for c in currencies]
@@ -327,6 +351,8 @@ def filter_events(events: list, currencies: list) -> list:
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    global LOG_FILE
+
     parser = argparse.ArgumentParser(description="Apex Grid News Fetcher")
     parser.add_argument("--output", default=DEFAULT_OUTPUT,
                         help="Output JSON file path")
@@ -336,7 +362,6 @@ def main():
                         help="Log file path")
     args = parser.parse_args()
 
-    global LOG_FILE
     LOG_FILE = args.log
 
     currencies = [c.strip().upper() for c in args.currencies.split(",") if c.strip()]
