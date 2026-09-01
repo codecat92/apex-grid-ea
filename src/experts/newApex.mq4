@@ -13,9 +13,9 @@
 //+------------------------------------------------------------------+
 extern string Group01 = "===== 1. PENGATURAN UTAMA (GRID & MARTINGALE) =====";
 extern int    MagicNumber       = 1888;   // ID unik bot
-extern double StartLot          = 0.10;   // Lot pertama setiap grid
+extern double StartLot          = 0.01;   // Lot pertama setiap grid
 extern double Multiplier        = 1.5;    // Pengali lot tiap level
-extern int    GridStep          = 150;    // Jarak antar level (pips)
+extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 25;     // TP keseluruhan (pips)
 extern int    OrdersPerStep     = 2;      // Jumlah order per level
 extern int    MaxGridLevel      = 10;     // Batas maksimum level grid
