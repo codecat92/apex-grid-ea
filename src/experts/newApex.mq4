@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -18,7 +18,7 @@ extern double Multiplier        = 1.5;    // Pengali lot tiap level
 extern int    GridStep          = 250;    // Jarak antar level (pips)
 extern int    GeneralTP         = 25;     // TP keseluruhan (pips)
 extern int    OrdersPerStep     = 2;      // Jumlah order per level
-extern int    MaxGridLevel      = 10;     // Batas maksimum level grid
+extern int    MaxGridLevel      = 20;     // Batas maksimum level grid
 extern int    StopLossPips      = 375;    // Jarak Stop Loss per level (pips)
 
 //+------------------------------------------------------------------+
@@ -1014,7 +1014,7 @@ int OnInit() {
       G_SellLastClosed[i] = 0;
    }
 
-   Print(G_Name + " EA initialized v1.10 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " EA initialized v1.11 multi-basket. Magic: " + IntegerToString(G_Magic));
    return INIT_SUCCEEDED;
 }
 
