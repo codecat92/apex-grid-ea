@@ -5,48 +5,67 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 
 //+------------------------------------------------------------------+
-//| CORE TRADING PARAMETERS                                          |
+//| CORE TRADING PARAMETERS (shared)                                 |
 //+------------------------------------------------------------------+
-extern string Group01 = "===== 1. PENGATURAN UTAMA (GRID & MARTINGALE) =====";
+extern string Group01 = "===== 1. PENGATURAN UTAMA (SHARED) =====";
 extern int    MagicNumber       = 1888;   // ID unik bot
-extern double StartLot          = 0.01;   // Lot pertama setiap grid
-extern double Multiplier        = 1.5;    // Pengali lot tiap level
-extern int    GridStep          = 250;    // Jarak antar level (pips)
-extern int    GeneralTP         = 25;     // TP keseluruhan (pips)
-extern int    OrdersPerStep     = 2;      // Jumlah order per level
-extern int    MaxGridLevel      = 20;     // Batas maksimum level grid
-extern int    StopLossPips      = 375;    // Jarak Stop Loss per level (pips)
+extern bool   UseTrailingStop   = true;   // Aktifkan trailing stop (global)
 
 //+------------------------------------------------------------------+
-//| MA ENTRY SIGNAL PARAMETERS (BB removed — pure MA crossover)      |
+//| BUY GRID PARAMETERS (per side)                                   |
 //+------------------------------------------------------------------+
-extern string Group02 = "===== 2. SINYAL ENTRY (MA CROSSOVER) =====";
+extern string Group02 = "===== 2. PARAMETER GRID BUY =====";
+extern bool   EnableBuyGrid     = true;   // Aktifkan basket BUY
+extern double StartLotBuy       = 0.01;   // Lot pertama grid BUY
+extern double MultiplierBuy     = 1.5;    // Pengali lot per level BUY
+extern int    GridStepBuy       = 250;    // Jarak antar level BUY (pips)
+extern int    GeneralTPBuy      = 25;     // TP keseluruhan BUY (pips)
+extern int    OrdersPerStepBuy  = 2;      // Jumlah order per level BUY
+extern int    MaxGridLevelBuy   = 20;     // Batas maksimum level grid BUY
+extern int    StopLossPipsBuy   = 375;    // Jarak Stop Loss per level BUY (pips)
+extern int    FixedDistanceBuy  = 10;     // Jarak trailing BUY (pips)
+extern int    TriggerDistanceBuy= 15;     // Jarak minimal trailing BUY (pips)
+extern double MinGapPipsBuy     = 3.0;    // Gap MA minimal untuk BUY (pips)
+extern int    EntryCooldownSecBuy = 30;   // Jeda antar entry BUY (detik)
+extern int    MaxBasketsPerSideBuy = 5;   // Maksimum basket BUY
+
+//+------------------------------------------------------------------+
+//| SELL GRID PARAMETERS (per side)                                  |
+//+------------------------------------------------------------------+
+extern string Group03 = "===== 3. PARAMETER GRID SELL =====";
+extern bool   EnableSellGrid    = true;   // Aktifkan basket SELL
+extern double StartLotSell      = 0.01;   // Lot pertama grid SELL
+extern double MultiplierSell    = 1.5;    // Pengali lot per level SELL
+extern int    GridStepSell      = 250;    // Jarak antar level SELL (pips)
+extern int    GeneralTPSell     = 25;     // TP keseluruhan SELL (pips)
+extern int    OrdersPerStepSell = 2;      // Jumlah order per level SELL
+extern int    MaxGridLevelSell  = 20;     // Batas maksimum level grid SELL
+extern int    StopLossPipsSell  = 375;    // Jarak Stop Loss per level SELL (pips)
+extern int    FixedDistanceSell = 10;     // Jarak trailing SELL (pips)
+extern int    TriggerDistanceSell = 15;   // Jarak minimal trailing SELL (pips)
+extern double MinGapPipsSell    = 3.0;    // Gap MA minimal untuk SELL (pips)
+extern int    EntryCooldownSecSell = 30;  // Jeda antar entry SELL (detik)
+extern int    MaxBasketsPerSideSell = 5;  // Maksimum basket SELL
+
+//+------------------------------------------------------------------+
+//| MA ENTRY SIGNAL PARAMETERS (shared — single crossover)           |
+//+------------------------------------------------------------------+
+extern string Group04 = "===== 4. SINYAL ENTRY (MA CROSSOVER) =====";
 extern int    MAFastPeriod      = 5;      // Periode MA cepat
 extern int    MASlowPeriod      = 20;     // Periode MA lambat
 extern int    MAMethod          = 0;      // 0=SMA,1=EMA,2=SMMA,3=LWMA
 extern int    MAPrice           = 0;      // 0=Close,1=Open,2=High,3=Low,4=Median,5=Typical,6=Weighted
-extern double MinGapPips        = 3.0;    // Jarak minimal fast-slow MA (pips) untuk sinyal bias
-extern int    EntryCooldownSec  = 30;     // Jeda minimal antar entry baru (detik)
-extern int    MaxBasketsPerSide = 5;      // Maksimum basket independen per sisi
-extern int    BBPeriod          = 20;     // Periode Bollinger Bands
-extern double BBDeviation       = 2.0;    // Deviasi Bollinger Bands
-
-//+------------------------------------------------------------------+
-//| TRAILING EXIT PARAMETERS                                         |
-//+------------------------------------------------------------------+
-extern string Group03 = "===== 3. EXIT & TRAILING STOP =====";
-extern bool   UseTrailingStop   = true;   // Aktifkan trailing stop
-extern int    FixedDistance     = 10;     // Jarak trailing (pips)
-extern int    TriggerDistance   = 15;     // Jarak minimal sebelum trailing aktif
+extern int    BBPeriod          = 20;     // Periode Bollinger Bands (unused)
+extern double BBDeviation       = 2.0;    // Deviasi Bollinger Bands (unused)
 
 //+------------------------------------------------------------------+
 //| TIME FILTER PARAMETERS                                           |
 //+------------------------------------------------------------------+
-extern string Group04 = "===== 4. FILTER WAKTU (JAM TRADING) =====";
+extern string Group05 = "===== 5. FILTER WAKTU (JAM TRADING) =====";
 extern string StartTime         = "00:00";// Jam mulai trading
 extern string EndTime           = "23:59";// Jam berhenti trading
 extern bool   FridayTrade       = true;   // Trading hari Jumat
@@ -59,7 +78,7 @@ extern int    AdditionalGridStep = 100;   // Grid step extra window
 //+------------------------------------------------------------------+
 //| RISK MANAGEMENT PARAMETERS                                       |
 //+------------------------------------------------------------------+
-extern string Group05 = "===== 5. MANAJEMEN RISIKO =====";
+extern string Group06 = "===== 6. MANAJEMEN RISIKO =====";
 extern double DailyProfitPct    = 20.0;   // Stop jika profit harian tercapai
 extern double WeeklyProfitPct   = 20.0;   // Stop jika profit mingguan tercapai
 extern double DrawdownCloseAll  = 90.0;   // Tutup semua jika drawdown > X%
@@ -71,7 +90,7 @@ extern double MinMarginLevel    = 1000.0; // Batas minimum margin level
 //+------------------------------------------------------------------+
 //| NEWS FILTER PARAMETERS                                           |
 //+------------------------------------------------------------------+
-extern string Group06 = "===== 6. FILTER NEWS =====";
+extern string Group07 = "===== 7. FILTER NEWS =====";
 extern bool   NewsFilter         = false;   // Aktifkan news filter
 extern int    NewsMinutesBefore  = 30;      // Menit sebelum news (no entry)
 extern int    NewsMinutesAfter   = 60;      // Menit setelah news (no entry)
@@ -161,10 +180,12 @@ double NormalizeLot(double lot) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate lot for a grid level: StartLot * Multiplier^level      |
+//| Calculate lot for a grid level: StartLot*Side * Multiplier*Side^level |
 //+------------------------------------------------------------------+
-double LotByLevel(int level) {
-   return NormalizeLot(StartLot * MathPow(Multiplier, level));
+double LotByLevel(string side, int level) {
+   double start = (side == "BUY") ? StartLotBuy : StartLotSell;
+   double mult  = (side == "BUY") ? MultiplierBuy : MultiplierSell;
+   return NormalizeLot(start * MathPow(mult, level));
 }
 
 //+------------------------------------------------------------------+
@@ -177,12 +198,12 @@ string MakeComment(string side, int level) {
 
 //+------------------------------------------------------------------+
 //| Magic number for a basket: MagicNumber*100 + offset              |
-//| BUY offset  = basketId (0..MaxBasketsPerSide-1)                  |
-//| SELL offset = MaxBasketsPerSide + basketId                       |
+//| BUY offset  = basketId (0..MaxBasketsPerSideBuy-1)               |
+//| SELL offset = MaxBasketsPerSideBuy + basketId                    |
 //+------------------------------------------------------------------+
 int BasketMagic(string side, int basketId) {
    int offset = basketId;
-   if (side == "SELL") offset = MaxBasketsPerSide + basketId;
+   if (side == "SELL") offset = MaxBasketsPerSideBuy + basketId;
    return MagicNumber * 100 + offset;
 }
 
@@ -196,12 +217,12 @@ int StrToMinutes(string t) {
 //+------------------------------------------------------------------+
 //| Get current grid step (uses AdditionalGridStep during extra time)|
 //+------------------------------------------------------------------+
-int CurrentGridStep() {
+int CurrentGridStep(string side) {
    if (UseExtraTime) {
       int now = Hour() * 60 + Minute();
       if (now >= G_ExtraStartMin && now <= G_ExtraEndMin) return AdditionalGridStep;
    }
-   return GridStep;
+   return (side == "BUY") ? GridStepBuy : GridStepSell;
 }
 
 //+------------------------------------------------------------------+
@@ -339,8 +360,10 @@ void OpenGridLevel(string side, int basketId) {
       cmd = isPending ? OP_SELLSTOP : OP_SELL;
    }
 
-   double lot = LotByLevel(level);
+   double lot = LotByLevel(side, level);
    string cmt = MakeComment(side, level);
+   int ordersPerStep = (side == "BUY") ? OrdersPerStepBuy : OrdersPerStepSell;
+   int stopLossPips  = (side == "BUY") ? StopLossPipsBuy : StopLossPipsSell;
 
    if (level == 0) {
       RefreshRates();
@@ -358,7 +381,7 @@ void OpenGridLevel(string side, int basketId) {
    // Calculate entry price for pending orders (levels > 0)
    double pendingPrice = 0;
    if (isPending) {
-      double stepPips = CurrentGridStep() * PipSize();
+      double stepPips = CurrentGridStep(side) * PipSize();
       if (side == "BUY") {
          double lowest = LowestBuyPrice(basketId);
          if (lowest == 0) lowest = G_BuyFirstPrice[basketId];
@@ -378,14 +401,14 @@ void OpenGridLevel(string side, int basketId) {
    Print(G_Name + " Grid ", side, " basket=", basketId, " level ", level, " lot=", lot, " pending=", isPending);
 
    bool anySucceeded = false;
-   for (int j = 0; j < OrdersPerStep; j++) {
+   for (int j = 0; j < ordersPerStep; j++) {
       RefreshRates();
       double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
       double sl = 0;
       if (side == "BUY")
-         sl = price - (StopLossPips * PipSize());
+         sl = price - (stopLossPips * PipSize());
       else
-         sl = price + (StopLossPips * PipSize());
+         sl = price + (stopLossPips * PipSize());
       int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, 0, cmt, targetMagic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
@@ -397,9 +420,9 @@ void OpenGridLevel(string side, int basketId) {
             double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
             double sl2 = 0;
             if (side == "BUY")
-               sl2 = mktPrice - (StopLossPips * PipSize());
+               sl2 = mktPrice - (stopLossPips * PipSize());
             else
-               sl2 = mktPrice + (StopLossPips * PipSize());
+               sl2 = mktPrice + (stopLossPips * PipSize());
             ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
                                lot, mktPrice, slip, sl2, 0, cmt, targetMagic, 0, CLR_NONE);
             if (ticket >= 0) anySucceeded = true;
@@ -511,17 +534,17 @@ void CheckTrailing() {
    double pipVal = pip * MarketInfo(Symbol(), MODE_TICKVALUE) / MarketInfo(Symbol(), MODE_TICKSIZE);
 
    // --- BUY trailing (per basket) ---
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
+   for (int id = 0; id < MaxBasketsPerSideBuy; id++) {
       if (!G_BuyActive[id]) continue;
       double dist   = (Bid - G_BuyFirstPrice[id]) / pip;
       double profit = SideProfit("BUY", id);
-      if (dist >= TriggerDistance) {
+      if (dist >= TriggerDistanceBuy) {
          G_BuyTrailing[id] = true;
       }
       if (G_BuyTrailing[id]) {
          if (profit > G_BuyPeakProfit[id]) G_BuyPeakProfit[id] = profit;
          double drop      = G_BuyPeakProfit[id] - profit;
-         double threshold = FixedDistance * pipVal * TotalSideLots("BUY", id);
+         double threshold = FixedDistanceBuy * pipVal * TotalSideLots("BUY", id);
          if (drop >= threshold && drop > 0) {
             Print(G_Name + " TRAL:::: close on the trawl BUY #", id);
             BasketClose("BUY", id);
@@ -530,17 +553,17 @@ void CheckTrailing() {
    }
 
    // --- SELL trailing (per basket) ---
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
+   for (int id = 0; id < MaxBasketsPerSideSell; id++) {
       if (!G_SellActive[id]) continue;
       double dist   = (G_SellFirstPrice[id] - Ask) / pip;
       double profit = SideProfit("SELL", id);
-      if (dist >= TriggerDistance) {
+      if (dist >= TriggerDistanceSell) {
          G_SellTrailing[id] = true;
       }
       if (G_SellTrailing[id]) {
          if (profit > G_SellPeakProfit[id]) G_SellPeakProfit[id] = profit;
          double drop      = G_SellPeakProfit[id] - profit;
-         double threshold = FixedDistance * pipVal * TotalSideLots("SELL", id);
+         double threshold = FixedDistanceSell * pipVal * TotalSideLots("SELL", id);
          if (drop >= threshold && drop > 0) {
             Print(G_Name + " TRAL:::: close on the trawl SELL #", id);
             BasketClose("SELL", id);
@@ -557,25 +580,30 @@ void CheckGridLevels() {
    if (!IsTradingAllowed() || G_Stopped) return;
 
    double pip  = PipSize();
-   int step    = CurrentGridStep();
    double dist;
 
    // BUY: price drops GridStep from deepest entry (per basket)
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
-      if (!G_BuyActive[id]) continue;
-      double lowest = LowestBuyPrice(id);
-      if (lowest == 0) lowest = G_BuyFirstPrice[id];
-      dist = (lowest - Bid) / pip;
-      if (dist >= step && G_BuyLevel[id] < MaxGridLevel) OpenGridLevel("BUY", id);
+   if (EnableBuyGrid) {
+      int stepBuy = CurrentGridStep("BUY");
+      for (int id = 0; id < MaxBasketsPerSideBuy; id++) {
+         if (!G_BuyActive[id]) continue;
+         double lowest = LowestBuyPrice(id);
+         if (lowest == 0) lowest = G_BuyFirstPrice[id];
+         dist = (lowest - Bid) / pip;
+         if (dist >= stepBuy && G_BuyLevel[id] < MaxGridLevelBuy) OpenGridLevel("BUY", id);
+      }
    }
 
    // SELL: price rises GridStep from deepest entry (per basket)
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
-      if (!G_SellActive[id]) continue;
-      double highest = HighestSellPrice(id);
-      if (highest == 0) highest = G_SellFirstPrice[id];
-      dist = (Ask - highest) / pip;
-      if (dist >= step && G_SellLevel[id] < MaxGridLevel) OpenGridLevel("SELL", id);
+   if (EnableSellGrid) {
+      int stepSell = CurrentGridStep("SELL");
+      for (int id = 0; id < MaxBasketsPerSideSell; id++) {
+         if (!G_SellActive[id]) continue;
+         double highest = HighestSellPrice(id);
+         if (highest == 0) highest = G_SellFirstPrice[id];
+         dist = (Ask - highest) / pip;
+         if (dist >= stepSell && G_SellLevel[id] < MaxGridLevelSell) OpenGridLevel("SELL", id);
+      }
    }
 }
 
@@ -587,7 +615,7 @@ void CheckGridLevels() {
 void ManagePendingOrders() {
    double pip = PipSize();
    int baseMagic = MagicNumber * 100;
-   int maxMagic  = baseMagic + MaxBasketsPerSide * 2;
+   int maxMagic  = baseMagic + MaxBasketsPerSideBuy + MaxBasketsPerSideSell;
    for (int i = OrdersTotal() - 1; i >= 0; i--) {
       if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
       int om = OrderMagicNumber();
@@ -640,15 +668,16 @@ void CheckMA() {
    double pip = PipSize();
    double gapPips = (fast - slow) / pip;
 
-   bool bullishBias = (gapPips >= MinGapPips);
-   bool bearishBias = (gapPips <= -MinGapPips);
-   bool buyCoolOk  = (TimeCurrent() - G_LastBuyEntry  >= EntryCooldownSec);
-   bool sellCoolOk = (TimeCurrent() - G_LastSellEntry >= EntryCooldownSec);
+   bool bullishBias = (gapPips >= MinGapPipsBuy);
+   bool bearishBias = (gapPips <= -MinGapPipsSell);
+   bool buyCoolOk  = (TimeCurrent() - G_LastBuyEntry  >= EntryCooldownSecBuy);
+   bool sellCoolOk = (TimeCurrent() - G_LastSellEntry >= EntryCooldownSecSell);
 
    static datetime lastLog = 0;
    if (TimeCurrent() - lastLog >= 5) {
       int buyCnt = 0, sellCnt = 0;
-      for (int i = 0; i < MaxBasketsPerSide; i++) { if (G_BuyActive[i]) buyCnt++; if (G_SellActive[i]) sellCnt++; }
+      for (int i = 0; i < MaxBasketsPerSideBuy; i++)  if (G_BuyActive[i])  buyCnt++;
+      for (int i = 0; i < MaxBasketsPerSideSell; i++) if (G_SellActive[i]) sellCnt++;
       Print(G_Name + " Tick gap=", DoubleToString(gapPips, 1),
             " bull=", bullishBias, " bear=", bearishBias,
             " buyBask=", buyCnt, " sellBask=", sellCnt);
@@ -656,25 +685,29 @@ void CheckMA() {
    }
 
    // Find free BUY basket slot
-   int buySlot = -1;
-   for (int i = 0; i < MaxBasketsPerSide; i++) {
-      if (!G_BuyActive[i]) { buySlot = i; break; }
-   }
-   if (bullishBias && buyCoolOk && buySlot >= 0) {
-      Print(G_Name + " Signal: bullish gap=", DoubleToString(gapPips, 1), " -> BUY #", buySlot);
-      OpenGridLevel("BUY", buySlot);
-      G_LastBuyEntry = TimeCurrent();
+   if (EnableBuyGrid) {
+      int buySlot = -1;
+      for (int i = 0; i < MaxBasketsPerSideBuy; i++) {
+         if (!G_BuyActive[i]) { buySlot = i; break; }
+      }
+      if (bullishBias && buyCoolOk && buySlot >= 0) {
+         Print(G_Name + " Signal: bullish gap=", DoubleToString(gapPips, 1), " -> BUY #", buySlot);
+         OpenGridLevel("BUY", buySlot);
+         G_LastBuyEntry = TimeCurrent();
+      }
    }
 
    // Find free SELL basket slot
-   int sellSlot = -1;
-   for (int i = 0; i < MaxBasketsPerSide; i++) {
-      if (!G_SellActive[i]) { sellSlot = i; break; }
-   }
-   if (bearishBias && sellCoolOk && sellSlot >= 0) {
-      Print(G_Name + " Signal: bearish gap=", DoubleToString(gapPips, 1), " -> SELL #", sellSlot);
-      OpenGridLevel("SELL", sellSlot);
-      G_LastSellEntry = TimeCurrent();
+   if (EnableSellGrid) {
+      int sellSlot = -1;
+      for (int i = 0; i < MaxBasketsPerSideSell; i++) {
+         if (!G_SellActive[i]) { sellSlot = i; break; }
+      }
+      if (bearishBias && sellCoolOk && sellSlot >= 0) {
+         Print(G_Name + " Signal: bearish gap=", DoubleToString(gapPips, 1), " -> SELL #", sellSlot);
+         OpenGridLevel("SELL", sellSlot);
+         G_LastSellEntry = TimeCurrent();
+      }
    }
 }
 
@@ -683,22 +716,22 @@ void CheckMA() {
 //| Basket close when basket-weighted average price reaches TP       |
 //+------------------------------------------------------------------+
 void CheckGeneralTP() {
-   if (GeneralTP <= 0) return;
+   if (GeneralTPBuy <= 0 && GeneralTPSell <= 0) return;
    double pip = PipSize();
 
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
+   for (int id = 0; id < MaxBasketsPerSideBuy; id++) {
       if (G_BuyActive[id]) {
          double avg = BasketAvgPrice("BUY", id);
-         if (avg > 0 && (Bid - avg) / pip >= GeneralTP) {
+         if (avg > 0 && (Bid - avg) / pip >= GeneralTPBuy) {
             Print(G_Name + " GeneralTP hit BUY #", id);
             BasketClose("BUY", id);
          }
       }
    }
-   for (int id = 0; id < MaxBasketsPerSide; id++) {
+   for (int id = 0; id < MaxBasketsPerSideSell; id++) {
       if (G_SellActive[id]) {
          double avg = BasketAvgPrice("SELL", id);
-         if (avg > 0 && (avg - Ask) / pip >= GeneralTP) {
+         if (avg > 0 && (avg - Ask) / pip >= GeneralTPSell) {
             Print(G_Name + " GeneralTP hit SELL #", id);
             BasketClose("SELL", id);
          }
@@ -724,10 +757,8 @@ void CheckRisk() {
 
     // Close all jika drawdown kritis
     if (ddPct >= DrawdownCloseAll) {
-       for (int i = 0; i < MaxBasketsPerSide; i++) {
-          if (G_BuyActive[i])  BasketClose("BUY", i);
-          if (G_SellActive[i]) BasketClose("SELL", i);
-       }
+       for (int i = 0; i < MaxBasketsPerSideBuy; i++)  if (G_BuyActive[i])  BasketClose("BUY", i);
+       for (int i = 0; i < MaxBasketsPerSideSell; i++) if (G_SellActive[i]) BasketClose("SELL", i);
        G_Stopped = true;
        G_StopReason = STOP_DRAWDOWN;
        return;
@@ -735,10 +766,8 @@ void CheckRisk() {
 
     // Close all jika margin level kritis
     if (mrgLv < MarginCloseAll) {
-       for (int i = 0; i < MaxBasketsPerSide; i++) {
-          if (G_BuyActive[i])  BasketClose("BUY", i);
-          if (G_SellActive[i]) BasketClose("SELL", i);
-       }
+       for (int i = 0; i < MaxBasketsPerSideBuy; i++)  if (G_BuyActive[i])  BasketClose("BUY", i);
+       for (int i = 0; i < MaxBasketsPerSideSell; i++) if (G_SellActive[i]) BasketClose("SELL", i);
        G_Stopped = true;
        G_StopReason = STOP_MARGIN;
        return;
@@ -989,32 +1018,34 @@ int OnInit() {
    G_WeekEquity = AccountEquity();
 
    // Init multi-basket arrays
-   ArrayResize(G_BuyActive, MaxBasketsPerSide);
-   ArrayResize(G_SellActive, MaxBasketsPerSide);
-   ArrayResize(G_BuyLevel, MaxBasketsPerSide);
-   ArrayResize(G_SellLevel, MaxBasketsPerSide);
-   ArrayResize(G_BuyFirstPrice, MaxBasketsPerSide);
-   ArrayResize(G_SellFirstPrice, MaxBasketsPerSide);
-   ArrayResize(G_BuyPeak, MaxBasketsPerSide);
-   ArrayResize(G_SellTrough, MaxBasketsPerSide);
-   ArrayResize(G_BuyTrailing, MaxBasketsPerSide);
-   ArrayResize(G_SellTrailing, MaxBasketsPerSide);
-   ArrayResize(G_BuyPeakProfit, MaxBasketsPerSide);
-   ArrayResize(G_SellPeakProfit, MaxBasketsPerSide);
-   ArrayResize(G_BuyLastClosed, MaxBasketsPerSide);
-   ArrayResize(G_SellLastClosed, MaxBasketsPerSide);
+   ArrayResize(G_BuyActive, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellActive, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyLevel, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellLevel, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyFirstPrice, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellFirstPrice, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyPeak, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellTrough, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyTrailing, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellTrailing, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyPeakProfit, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellPeakProfit, MaxBasketsPerSideSell);
+   ArrayResize(G_BuyLastClosed, MaxBasketsPerSideBuy);
+   ArrayResize(G_SellLastClosed, MaxBasketsPerSideSell);
 
-   for (int i = 0; i < MaxBasketsPerSide; i++) {
+   for (int i = 0; i < MaxBasketsPerSideBuy; i++) {
       G_BuyActive[i] = false;  G_BuyLevel[i] = -1;  G_BuyFirstPrice[i] = 0;
       G_BuyPeak[i] = 0;        G_BuyPeakProfit[i] = 0;  G_BuyTrailing[i] = false;
       G_BuyLastClosed[i] = 0;
+   }
 
+   for (int i = 0; i < MaxBasketsPerSideSell; i++) {
       G_SellActive[i] = false; G_SellLevel[i] = -1;  G_SellFirstPrice[i] = 0;
       G_SellTrough[i] = 0;     G_SellPeakProfit[i] = 0; G_SellTrailing[i] = false;
       G_SellLastClosed[i] = 0;
    }
 
-   Print(G_Name + " EA initialized v1.11 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " EA initialized v1.12 multi-basket. Magic: " + IntegerToString(G_Magic));
    return INIT_SUCCEEDED;
 }
 
