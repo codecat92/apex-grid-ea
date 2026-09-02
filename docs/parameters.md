@@ -1,8 +1,8 @@
-# Apex Grid EA — Parameter Reference (v1.12)
+# Apex Grid EA — Parameter Reference (v1.13)
 
-> Parameter dikelompokkan per sisi BUY/SELL. Semua nilai default sama untuk kedua sisi
-> agar perilaku default identik dengan versi sebelumnya. Parameter dengan suffix `Buy`/`Sell`
-> mengontrol sisi masing-masing secara terpisah.
+> Parameter dikelompokkan per sisi BUY/SELL. Default telah diselaraskan dengan
+> behaviour Yetti Classic (rounding lot, grid step berbasis POINT, single-basket).
+> Nilai tetap dapat diubah user via tab Inputs untuk uji komposisi.
 
 ## Shared
 
@@ -16,9 +16,9 @@
 | Parameter              | Default | Type   | Description                                     |
 |------------------------|---------|--------|-------------------------------------------------|
 | EnableBuyGrid          | true    | bool   | Enable BUY baskets entirely                     |
-| StartLotBuy            | 0.01    | double | Lot size for first BUY grid level               |
+| StartLotBuy            | 0.13    | double | Lot for first BUY level (Yetti-aligned)         |
 | MultiplierBuy          | 1.5     | double | Lot multiplier per BUY level                    |
-| GridStepBuy            | 250     | int    | Distance between BUY grid levels (pips)         |
+| GridStepBuy            | 250     | int    | BUY grid distance in POINTS (250 = 25 pips 5-digit) |
 | GeneralTPBuy           | 25      | int    | Overall take profit for BUY basket (pips)       |
 | OrdersPerStepBuy       | 2       | int    | Orders per BUY grid level                       |
 | MaxGridLevelBuy        | 20      | int    | Max BUY grid levels                             |
@@ -27,16 +27,16 @@
 | TriggerDistanceBuy     | 15      | int    | Min BUY distance before trailing activates      |
 | MinGapPipsBuy          | 3.0     | double | Min MA gap to open a BUY basket (pips)          |
 | EntryCooldownSecBuy    | 30      | int    | Cooldown between BUY entries (sec)              |
-| MaxBasketsPerSideBuy   | 5       | int    | Max concurrent BUY baskets                      |
+| MaxBasketsPerSideBuy   | 1       | int    | Max concurrent BUY baskets (1 = Yetti single-basket) |
 
 ## SELL Grid
 
 | Parameter              | Default | Type   | Description                                     |
 |------------------------|---------|--------|-------------------------------------------------|
 | EnableSellGrid         | true    | bool   | Enable SELL baskets entirely                    |
-| StartLotSell           | 0.01    | double | Lot size for first SELL grid level              |
+| StartLotSell           | 0.13    | double | Lot for first SELL level (Yetti-aligned)        |
 | MultiplierSell         | 1.5     | double | Lot multiplier per SELL level                   |
-| GridStepSell           | 250     | int    | Distance between SELL grid levels (pips)        |
+| GridStepSell           | 250     | int    | SELL grid distance in POINTS (250 = 25 pips 5-digit) |
 | GeneralTPSell          | 25      | int    | Overall take profit for SELL basket (pips)      |
 | OrdersPerStepSell      | 2       | int    | Orders per SELL grid level                      |
 | MaxGridLevelSell       | 20      | int    | Max SELL grid levels                            |
@@ -45,7 +45,7 @@
 | TriggerDistanceSell    | 15      | int    | Min SELL distance before trailing activates     |
 | MinGapPipsSell         | 3.0     | double | Min MA gap to open a SELL basket (pips)         |
 | EntryCooldownSecSell   | 30      | int    | Cooldown between SELL entries (sec)             |
-| MaxBasketsPerSideSell  | 5       | int    | Max concurrent SELL baskets                     |
+| MaxBasketsPerSideSell  | 1       | int    | Max concurrent SELL baskets (1 = Yetti single-basket) |
 
 ## MA Entry Signal (shared — single crossover)
 
@@ -69,7 +69,7 @@
 | UseExtraTime      | true    | bool   | Enable extra trading window     |
 | ExtraStart        | 01:06   | string | Extra window start              |
 | ExtraEnd          | 01:07   | string | Extra window end                |
-| AdditionalGridStep| 100     | int    | Grid step during extra window (shared) |
+| AdditionalGridStep| 100     | int    | Grid step during extra window (points) |
 
 ## Risk Management
 
@@ -93,6 +93,23 @@
 | NewsRefreshMin    | 15       | int    | News data refresh interval (minutes)         |
 | NewsCurrencies    | GBP,USD  | string | Currencies to monitor (comma separated)      |
 | NewsTimezoneOffset| 0        | int    | Timezone offset broker from UTC (e.g. 2, -5) |
+
+## Perubahan v1.13 (align ke Yetti)
+
+- **Rounding lot**: `NormalizeLot()` kini memakai `MathRound` (bukan `MathFloor`).
+  Deret 0.13 → 0.20 → 0.29 → 0.44 → 0.66 → 0.99 → 1.48 → 2.22 (persis log Yetti 26 Ags).
+- **GridStep berbasis POINT**: jarak grid = `GridStep × Point`.
+  250 points = 25 pips (GBPUSD 5-digit), sama dengan grid Yetti.
+- **Single-basket**: `MaxBasketsPerSideBuy/Sell = 1` — satu basket dalam per sisi seperti Yetti.
+- **StartLot = 0.13** untuk kedua sisi.
+
+## Catatan Risiko
+
+- `MaxGridLevel = 20` dengan grid step 25 pips = kedalaman 500 pips.
+- Lot level 20 ≈ **432 lot** per order (×2 order = ~864/level) — jauh di atas yang
+  pernah tercapai Yetti (level 10, ~7.5 lot). Untuk uji komposisi kecil, turunkan
+  `MaxGridLevel` atau `StartLot`.
+- SL 375 pips per order tetap dipasang sebagai proteksi (Yetti tidak memakai SL).
 
 ## Nota (v1.12)
 

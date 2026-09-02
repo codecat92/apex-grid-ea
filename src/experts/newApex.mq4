@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -20,9 +20,9 @@ extern bool   UseTrailingStop   = true;   // Aktifkan trailing stop (global)
 //+------------------------------------------------------------------+
 extern string Group02 = "===== 2. PARAMETER GRID BUY =====";
 extern bool   EnableBuyGrid     = true;   // Aktifkan basket BUY
-extern double StartLotBuy       = 0.01;   // Lot pertama grid BUY
+extern double StartLotBuy       = 0.13;   // Lot pertama grid BUY (Yetti-aligned)
 extern double MultiplierBuy     = 1.5;    // Pengali lot per level BUY
-extern int    GridStepBuy       = 250;    // Jarak antar level BUY (pips)
+extern int    GridStepBuy       = 250;    // Jarak antar level BUY (points; 250 = 25 pips 5-digit)
 extern int    GeneralTPBuy      = 25;     // TP keseluruhan BUY (pips)
 extern int    OrdersPerStepBuy  = 2;      // Jumlah order per level BUY
 extern int    MaxGridLevelBuy   = 20;     // Batas maksimum level grid BUY
@@ -31,16 +31,16 @@ extern int    FixedDistanceBuy  = 10;     // Jarak trailing BUY (pips)
 extern int    TriggerDistanceBuy= 15;     // Jarak minimal trailing BUY (pips)
 extern double MinGapPipsBuy     = 3.0;    // Gap MA minimal untuk BUY (pips)
 extern int    EntryCooldownSecBuy = 30;   // Jeda antar entry BUY (detik)
-extern int    MaxBasketsPerSideBuy = 5;   // Maksimum basket BUY
+extern int    MaxBasketsPerSideBuy = 1;   // Maksimum basket BUY (1 = Yetti single-basket)
 
 //+------------------------------------------------------------------+
 //| SELL GRID PARAMETERS (per side)                                  |
 //+------------------------------------------------------------------+
 extern string Group03 = "===== 3. PARAMETER GRID SELL =====";
 extern bool   EnableSellGrid    = true;   // Aktifkan basket SELL
-extern double StartLotSell      = 0.01;   // Lot pertama grid SELL
+extern double StartLotSell      = 0.13;   // Lot pertama grid SELL (Yetti-aligned)
 extern double MultiplierSell    = 1.5;    // Pengali lot per level SELL
-extern int    GridStepSell      = 250;    // Jarak antar level SELL (pips)
+extern int    GridStepSell      = 250;    // Jarak antar level SELL (points; 250 = 25 pips 5-digit)
 extern int    GeneralTPSell     = 25;     // TP keseluruhan SELL (pips)
 extern int    OrdersPerStepSell = 2;      // Jumlah order per level SELL
 extern int    MaxGridLevelSell  = 20;     // Batas maksimum level grid SELL
@@ -49,7 +49,7 @@ extern int    FixedDistanceSell = 10;     // Jarak trailing SELL (pips)
 extern int    TriggerDistanceSell = 15;   // Jarak minimal trailing SELL (pips)
 extern double MinGapPipsSell    = 3.0;    // Gap MA minimal untuk SELL (pips)
 extern int    EntryCooldownSecSell = 30;  // Jeda antar entry SELL (detik)
-extern int    MaxBasketsPerSideSell = 5;  // Maksimum basket SELL
+extern int    MaxBasketsPerSideSell = 1;  // Maksimum basket SELL (1 = Yetti single-basket)
 
 //+------------------------------------------------------------------+
 //| MA ENTRY SIGNAL PARAMETERS (shared — single crossover)           |
@@ -73,7 +73,7 @@ extern string FridayStop        = "14:00";// Jam stop Jumat
 extern bool   UseExtraTime      = true;   // Window tambahan
 extern string ExtraStart        = "01:06";// Mulai extra window
 extern string ExtraEnd          = "01:07";// Akhir extra window
-extern int    AdditionalGridStep = 100;   // Grid step extra window
+extern int    AdditionalGridStep = 100;   // Grid step extra window (points)
 
 //+------------------------------------------------------------------+
 //| RISK MANAGEMENT PARAMETERS                                       |
@@ -167,13 +167,15 @@ double PipSize() {
 
 //+------------------------------------------------------------------+
 //| Helper: Normalize lot to broker rules                             |
+//| ROUNDING (bukan floor) agar deret martingale selaras dengan Yetti  |
+//| Contoh 0.13*1.5=0.195 → 0.20, bukan 0.19                          |
 //+------------------------------------------------------------------+
 double NormalizeLot(double lot) {
    double min  = MarketInfo(Symbol(), MODE_MINLOT);
    double max  = MarketInfo(Symbol(), MODE_MAXLOT);
    double step = MarketInfo(Symbol(), MODE_LOTSTEP);
    int digits = (step >= 0.1) ? 1 : 2;
-   lot = MathFloor(lot / step) * step;
+   lot = MathRound(lot / step) * step;
    if (lot < min) lot = min;
    if (lot > max) lot = max;
    return NormalizeDouble(lot, digits);
@@ -216,6 +218,7 @@ int StrToMinutes(string t) {
 
 //+------------------------------------------------------------------+
 //| Get current grid step (uses AdditionalGridStep during extra time)|
+//| Returned in POINTS (Yetti-aligned): 250 = 25 pips on 5-digit      |
 //+------------------------------------------------------------------+
 int CurrentGridStep(string side) {
    if (UseExtraTime) {
@@ -379,21 +382,22 @@ void OpenGridLevel(string side, int basketId) {
    }
 
    // Calculate entry price for pending orders (levels > 0)
+   // GridStep in POINTS (e.g. 250 points = 0.0025 on 5-digit) — Yetti-aligned
    double pendingPrice = 0;
    if (isPending) {
-      double stepPips = CurrentGridStep(side) * PipSize();
+      double stepPrice = CurrentGridStep(side) * Point;
       if (side == "BUY") {
          double lowest = LowestBuyPrice(basketId);
          if (lowest == 0) lowest = G_BuyFirstPrice[basketId];
-         pendingPrice = lowest - stepPips;
+         pendingPrice = lowest - stepPrice;
       } else {
          double highest = HighestSellPrice(basketId);
          if (highest == 0) highest = G_SellFirstPrice[basketId];
-         pendingPrice = highest + stepPips;
+         pendingPrice = highest + stepPrice;
       }
       // Ensure pending price is valid vs current market
       RefreshRates();
-      double stoplevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * PipSize();
+      double stoplevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
       if (side == "BUY" && pendingPrice >= Ask - stoplevel) pendingPrice = Ask - stoplevel;
       if (side == "SELL" && pendingPrice <= Bid + stoplevel) pendingPrice = Bid + stoplevel;
    }
@@ -579,7 +583,8 @@ void CheckTrailing() {
 void CheckGridLevels() {
    if (!IsTradingAllowed() || G_Stopped) return;
 
-   double pip  = PipSize();
+   // GridStep in POINTS — dist dihitung dalam point (Yetti-aligned)
+   double point = Point;
    double dist;
 
    // BUY: price drops GridStep from deepest entry (per basket)
@@ -589,7 +594,7 @@ void CheckGridLevels() {
          if (!G_BuyActive[id]) continue;
          double lowest = LowestBuyPrice(id);
          if (lowest == 0) lowest = G_BuyFirstPrice[id];
-         dist = (lowest - Bid) / pip;
+         dist = (lowest - Bid) / point;
          if (dist >= stepBuy && G_BuyLevel[id] < MaxGridLevelBuy) OpenGridLevel("BUY", id);
       }
    }
@@ -601,7 +606,7 @@ void CheckGridLevels() {
          if (!G_SellActive[id]) continue;
          double highest = HighestSellPrice(id);
          if (highest == 0) highest = G_SellFirstPrice[id];
-         dist = (Ask - highest) / pip;
+         dist = (Ask - highest) / point;
          if (dist >= stepSell && G_SellLevel[id] < MaxGridLevelSell) OpenGridLevel("SELL", id);
       }
    }
@@ -1045,7 +1050,7 @@ int OnInit() {
       G_SellLastClosed[i] = 0;
    }
 
-   Print(G_Name + " EA initialized v1.12 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " EA initialized v1.13 multi-basket. Magic: " + IntegerToString(G_Magic));
    return INIT_SUCCEEDED;
 }
 
