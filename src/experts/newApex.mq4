@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.14"
+#property version   "1.15"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -168,6 +168,27 @@ double PipSize() {
 }
 
 //+------------------------------------------------------------------+
+//| Helper: Human-readable text for a stop reason code                |
+//+------------------------------------------------------------------+
+string StopReasonText(int reason) {
+   if (reason == STOP_DRAWDOWN) return "drawdown limit";
+   if (reason == STOP_PROFIT)   return "profit target";
+   if (reason == STOP_MARGIN)   return "margin level";
+   return "unknown";
+}
+
+//+------------------------------------------------------------------+
+//| Set stopped state and log it ONLY on a state transition          |
+//| (prevents flooding the log with the same message every tick)      |
+//+------------------------------------------------------------------+
+void StopTrading(int reason, string sentence) {
+   bool transition = (!G_Stopped || G_StopReason != reason);
+   G_Stopped = true;
+   G_StopReason = reason;
+   if (transition) Print(G_Name + " STOPPED: " + sentence);
+}
+
+//+------------------------------------------------------------------+
 //| Helper: Normalize lot to broker rules                             |
 //| ROUNDING (bukan floor) agar deret martingale selaras dengan Yetti  |
 //| Contoh 0.13*1.5=0.195 → 0.20, bukan 0.19                          |
@@ -235,21 +256,50 @@ int CurrentGridStep(string side) {
 //+------------------------------------------------------------------+
 bool IsTradingAllowed() {
    if (G_Stopped) return false;
+
    if (NewsFilter && IsNewsBlackout()) {
-      static datetime lastLog = 0;
-      if (TimeCurrent() - lastLog > 300) {
-         Print(G_Name + " BLOCKED by news filter at ", TimeToString(TimeCurrent()));
-         lastLog = TimeCurrent();
+      static datetime newsLog = 0;
+      if (TimeCurrent() - newsLog > 300) {
+         Print(G_Name + " Trading blocked: news filter is active near a scheduled news release.");
+         newsLog = TimeCurrent();
       }
       return false;
    }
    int dow = DayOfWeek();
-   if (dow == 0 || dow == 6) return false;
+   if (dow == 0 || dow == 6) {
+      static datetime wkndLog = 0;
+      if (TimeCurrent() - wkndLog > 300) {
+         Print(G_Name + " Trading blocked: the market is closed (weekend).");
+         wkndLog = TimeCurrent();
+      }
+      return false;
+   }
    int now = Hour() * 60 + Minute();
-   if (now < G_StartMin || now > G_EndMin) return false;
+   if (now < G_StartMin || now > G_EndMin) {
+      static datetime hrsLog = 0;
+      if (TimeCurrent() - hrsLog > 300) {
+         Print(G_Name + " Trading blocked: current time is outside the active window " + StartTime + "-" + EndTime + ".");
+         hrsLog = TimeCurrent();
+      }
+      return false;
+   }
    if (dow == 5) {
-      if (!FridayTrade) return false;
-      if (now >= G_FridayStopMin) return false;
+      if (!FridayTrade) {
+         static datetime friLog = 0;
+         if (TimeCurrent() - friLog > 300) {
+            Print(G_Name + " Trading blocked: Friday trading is disabled.");
+            friLog = TimeCurrent();
+         }
+         return false;
+      }
+      if (now >= G_FridayStopMin) {
+         static datetime friStopLog = 0;
+         if (TimeCurrent() - friStopLog > 300) {
+            Print(G_Name + " Trading blocked: Friday trading already ended at " + FridayStop + ".");
+            friStopLog = TimeCurrent();
+         }
+         return false;
+      }
    }
    return true;
 }
@@ -753,6 +803,9 @@ void CheckGeneralTP() {
 
 //+------------------------------------------------------------------+
 //| RISK SHUTDOWN (Layer 5)                                          |
+//| ORDER MATTERS: critical close-all checks must run BEFORE the      |
+//| soft MaxDrawdown stop, otherwise a 90% drawdown would be masked   |
+//| by the >=15% soft-stop returning first.                           |
 //+------------------------------------------------------------------+
 void CheckRisk() {
    double eq    = AccountEquity();
@@ -760,19 +813,13 @@ void CheckRisk() {
    double ddPct = (bal > 0) ? (bal - eq) / bal * 100 : 0;
    double mrgLv = (AccountMargin() > 0) ? (eq / AccountMargin()) * 100 : DBL_MAX;
 
-   // Auto stop jika drawdown melebihi batas
-   if (AutoStopTrading && ddPct >= MaxDrawdown) {
-      G_Stopped = true;
-      G_StopReason = STOP_DRAWDOWN;
-      return;
-   }
-
     // Close all jika drawdown kritis
     if (ddPct >= DrawdownCloseAll) {
        for (int i = 0; i < MaxBasketsPerSideBuy; i++)  if (G_BuyActive[i])  BasketClose("BUY", i);
        for (int i = 0; i < MaxBasketsPerSideSell; i++) if (G_SellActive[i]) BasketClose("SELL", i);
-       G_Stopped = true;
-       G_StopReason = STOP_DRAWDOWN;
+       StopTrading(STOP_DRAWDOWN,
+          "Critical drawdown of " + DoubleToString(ddPct, 2) + "% exceeded the safety limit of " +
+          DoubleToString(DrawdownCloseAll, 2) + "%. All open positions were closed and trading stopped.");
        return;
     }
 
@@ -780,15 +827,25 @@ void CheckRisk() {
     if (mrgLv < MarginCloseAll) {
        for (int i = 0; i < MaxBasketsPerSideBuy; i++)  if (G_BuyActive[i])  BasketClose("BUY", i);
        for (int i = 0; i < MaxBasketsPerSideSell; i++) if (G_SellActive[i]) BasketClose("SELL", i);
-       G_Stopped = true;
-       G_StopReason = STOP_MARGIN;
+       StopTrading(STOP_MARGIN,
+          "Margin level dropped to " + DoubleToString(mrgLv, 2) + "%, below the critical limit of " +
+          DoubleToString(MarginCloseAll, 2) + "%. All open positions were closed and trading stopped.");
        return;
     }
 
+   // Auto stop jika drawdown melebihi batas (soft stop — positions stay managed)
+   if (AutoStopTrading && ddPct >= MaxDrawdown) {
+      StopTrading(STOP_DRAWDOWN,
+         "Account drawdown reached " + DoubleToString(ddPct, 2) + "%, which is higher than the allowed MaxDrawdown of " +
+         DoubleToString(MaxDrawdown, 2) + "%. Trading has been stopped, existing positions are still managed.");
+      return;
+   }
+
    // Stop trading jika margin level di bawah minimum
    if (mrgLv < MinMarginLevel) {
-      G_Stopped = true;
-      G_StopReason = STOP_MARGIN;
+      StopTrading(STOP_MARGIN,
+         "Margin level is only " + DoubleToString(mrgLv, 2) + "%, below the minimum required of " +
+         DoubleToString(MinMarginLevel, 2) + "%. Trading has been stopped.");
       return;
    }
 
@@ -796,8 +853,9 @@ void CheckRisk() {
    double dayProfit = eq - G_DayEquity;
    double dayPct    = (G_DayEquity > 0) ? (dayProfit / G_DayEquity) * 100 : 0;
    if (dayPct >= DailyProfitPct) {
-      G_Stopped = true;
-      G_StopReason = STOP_PROFIT;
+      StopTrading(STOP_PROFIT,
+         "Daily profit target of " + DoubleToString(DailyProfitPct, 2) + "% was reached (current " +
+         DoubleToString(dayPct, 2) + "%). Trading has been stopped until the next trading day.");
       return;
    }
 
@@ -805,8 +863,9 @@ void CheckRisk() {
    double weekProfit = eq - G_WeekEquity;
    double weekPct    = (G_WeekEquity > 0) ? (weekProfit / G_WeekEquity) * 100 : 0;
    if (weekPct >= WeeklyProfitPct) {
-      G_Stopped = true;
-      G_StopReason = STOP_PROFIT;
+      StopTrading(STOP_PROFIT,
+         "Weekly profit target of " + DoubleToString(WeeklyProfitPct, 2) + "% was reached (current " +
+         DoubleToString(weekPct, 2) + "%). Trading has been stopped until next week.");
    }
 }
 
@@ -996,10 +1055,14 @@ void CheckReset() {
    datetime thisWk = iTime(Symbol(), PERIOD_W1, 0);
 
    if (today != G_DayStart) {
+      int prevDayReason = G_StopReason;
       G_DayStart = today;
       G_DayEquity = AccountEquity();
-      G_Stopped = false;
-      G_StopReason = STOP_NONE;
+      if (G_Stopped) {
+         G_Stopped = false;
+         G_StopReason = STOP_NONE;
+         Print(G_Name + " Trading resumed (new trading day). Previous stop reason: " + StopReasonText(prevDayReason));
+      }
    }
 
    if (thisWk != G_WeekStart) {
@@ -1008,6 +1071,7 @@ void CheckReset() {
       if (G_StopReason == STOP_PROFIT) {
          G_Stopped = false;
          G_StopReason = STOP_NONE;
+         Print(G_Name + " Trading resumed (new trading week). Weekly profit target reached was reset.");
       }
    }
 }
@@ -1057,7 +1121,11 @@ int OnInit() {
       G_SellLastClosed[i] = 0;
    }
 
-   Print(G_Name + " EA initialized v1.14 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " EA initialized v1.15 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " Config: BUY StartLot=" + DoubleToString(StartLotBuy, 2) + " GridStep=" + GridStepBuy +
+         " MaxLvl=" + MaxGridLevelBuy + " GenTP=" + GeneralTPBuy + " | SELL StartLot=" + DoubleToString(StartLotSell, 2) +
+         " GridStep=" + GridStepSell + " MaxLvl=" + MaxGridLevelSell + " GenTP=" + GeneralTPSell +
+         " | Risk: MaxDD=" + DoubleToString(MaxDrawdown, 2) + "% MinMargin=" + DoubleToString(MinMarginLevel, 2) + "%");
    return INIT_SUCCEEDED;
 }
 

@@ -1,4 +1,4 @@
-# Apex Grid EA — Parameter Reference (v1.14)
+# Apex Grid EA — Parameter Reference (v1.15)
 
 > Parameter dikelompokkan per sisi BUY/SELL. Default telah diselaraskan dengan
 > behaviour Yetti Classic (rounding lot, grid step berbasis POINT, single-basket,
@@ -95,6 +95,25 @@
 | NewsRefreshMin    | 15       | int    | News data refresh interval (minutes)         |
 | NewsCurrencies    | GBP,USD  | string | Currencies to monitor (comma separated)      |
 | NewsTimezoneOffset| 0        | int    | Timezone offset broker from UTC (e.g. 2, -5) |
+
+## Perubahan v1.15 (transparansi log)
+
+Setiap kejadian yang menghentikan atau memblokir trading kini dicetak di log dalam
+kalimat lengkap (English) agar investigasi mudah:
+
+- **STOPPED** — bot berhenti trading. Penyebab verbatim + nilai terukur:
+  - Drawdown melebihi `MaxDrawdown`
+  - Drawdown kritis `DrawdownCloseAll` (semua posisi ditutup)
+  - Margin kritis `MarginCloseAll` (semua posisi ditutup)
+  - Margin di bawah `MinMarginLevel`
+  - Daily / Weekly profit target tercapai
+- **Trading resumed** — bot mulai lagi setelah reset harian/mingguan, mencantumkan
+  penyebab stop sebelumnya.
+- **Trading blocked** — entry diblokir sementara (dithrottle ~5 menit): weekend,
+  di luar jam aktif, Friday-stop, atau news filter.
+- **OnInit** mencetak ringkasan konfigurasi aktif untuk verifikasi parameter.
+
+Log hanya dicetak saat terjadi **transisi state** (tidak membanjiri log).
 
 ## Perubahan v1.14 (exit ala Yetti)
 
