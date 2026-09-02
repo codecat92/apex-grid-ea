@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "codecat92"
 #property link      ""
-#property version   "1.13"
+#property version   "1.14"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -23,10 +23,11 @@ extern bool   EnableBuyGrid     = true;   // Aktifkan basket BUY
 extern double StartLotBuy       = 0.13;   // Lot pertama grid BUY (Yetti-aligned)
 extern double MultiplierBuy     = 1.5;    // Pengali lot per level BUY
 extern int    GridStepBuy       = 250;    // Jarak antar level BUY (points; 250 = 25 pips 5-digit)
-extern int    GeneralTPBuy      = 25;     // TP keseluruhan BUY (pips)
+extern int    GeneralTPBuy      = 200;    // TP keseluruhan BUY (pips; Yetti-aligned)
 extern int    OrdersPerStepBuy  = 2;      // Jumlah order per level BUY
 extern int    MaxGridLevelBuy   = 20;     // Batas maksimum level grid BUY
 extern int    StopLossPipsBuy   = 375;    // Jarak Stop Loss per level BUY (pips)
+extern bool   UseStopLossBuy    = true;   // Pasang SL per order BUY (false = SL 0 ala Yetti)
 extern int    FixedDistanceBuy  = 10;     // Jarak trailing BUY (pips)
 extern int    TriggerDistanceBuy= 15;     // Jarak minimal trailing BUY (pips)
 extern double MinGapPipsBuy     = 3.0;    // Gap MA minimal untuk BUY (pips)
@@ -41,10 +42,11 @@ extern bool   EnableSellGrid    = true;   // Aktifkan basket SELL
 extern double StartLotSell      = 0.13;   // Lot pertama grid SELL (Yetti-aligned)
 extern double MultiplierSell    = 1.5;    // Pengali lot per level SELL
 extern int    GridStepSell      = 250;    // Jarak antar level SELL (points; 250 = 25 pips 5-digit)
-extern int    GeneralTPSell     = 25;     // TP keseluruhan SELL (pips)
+extern int    GeneralTPSell     = 200;    // TP keseluruhan SELL (pips; Yetti-aligned)
 extern int    OrdersPerStepSell = 2;      // Jumlah order per level SELL
 extern int    MaxGridLevelSell  = 20;     // Batas maksimum level grid SELL
 extern int    StopLossPipsSell  = 375;    // Jarak Stop Loss per level SELL (pips)
+extern bool   UseStopLossSell   = true;   // Pasang SL per order SELL (false = SL 0 ala Yetti)
 extern int    FixedDistanceSell = 10;     // Jarak trailing SELL (pips)
 extern int    TriggerDistanceSell = 15;   // Jarak minimal trailing SELL (pips)
 extern double MinGapPipsSell    = 3.0;    // Gap MA minimal untuk SELL (pips)
@@ -367,6 +369,7 @@ void OpenGridLevel(string side, int basketId) {
    string cmt = MakeComment(side, level);
    int ordersPerStep = (side == "BUY") ? OrdersPerStepBuy : OrdersPerStepSell;
    int stopLossPips  = (side == "BUY") ? StopLossPipsBuy : StopLossPipsSell;
+   bool useStopLoss  = (side == "BUY") ? UseStopLossBuy : UseStopLossSell;
 
    if (level == 0) {
       RefreshRates();
@@ -409,10 +412,12 @@ void OpenGridLevel(string side, int basketId) {
       RefreshRates();
       double price = isPending ? pendingPrice : ((side == "BUY") ? Ask : Bid);
       double sl = 0;
-      if (side == "BUY")
-         sl = price - (stopLossPips * PipSize());
-      else
-         sl = price + (stopLossPips * PipSize());
+      if (useStopLoss) {
+         if (side == "BUY")
+            sl = price - (stopLossPips * PipSize());
+         else
+            sl = price + (stopLossPips * PipSize());
+      }
       int ticket = OrderSend(Symbol(), cmd, lot, price, slip, sl, 0, cmt, targetMagic, 0, CLR_NONE);
       if (ticket >= 0) {
          anySucceeded = true;
@@ -423,10 +428,12 @@ void OpenGridLevel(string side, int basketId) {
             RefreshRates();
             double mktPrice = (cmd == OP_BUYSTOP) ? Ask : Bid;
             double sl2 = 0;
-            if (side == "BUY")
-               sl2 = mktPrice - (stopLossPips * PipSize());
-            else
-               sl2 = mktPrice + (stopLossPips * PipSize());
+            if (useStopLoss) {
+               if (side == "BUY")
+                  sl2 = mktPrice - (stopLossPips * PipSize());
+               else
+                  sl2 = mktPrice + (stopLossPips * PipSize());
+            }
             ticket = OrderSend(Symbol(), (cmd == OP_BUYSTOP) ? OP_BUY : OP_SELL,
                                lot, mktPrice, slip, sl2, 0, cmt, targetMagic, 0, CLR_NONE);
             if (ticket >= 0) anySucceeded = true;
@@ -1050,7 +1057,7 @@ int OnInit() {
       G_SellLastClosed[i] = 0;
    }
 
-   Print(G_Name + " EA initialized v1.13 multi-basket. Magic: " + IntegerToString(G_Magic));
+   Print(G_Name + " EA initialized v1.14 multi-basket. Magic: " + IntegerToString(G_Magic));
    return INIT_SUCCEEDED;
 }
 

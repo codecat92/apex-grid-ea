@@ -1,8 +1,8 @@
-# Apex Grid EA — Parameter Reference (v1.13)
+# Apex Grid EA — Parameter Reference (v1.14)
 
 > Parameter dikelompokkan per sisi BUY/SELL. Default telah diselaraskan dengan
-> behaviour Yetti Classic (rounding lot, grid step berbasis POINT, single-basket).
-> Nilai tetap dapat diubah user via tab Inputs untuk uji komposisi.
+> behaviour Yetti Classic (rounding lot, grid step berbasis POINT, single-basket,
+> GeneralTP 200, opsi SL ala Yetti). Nilai tetap dapat diubah user via tab Inputs.
 
 ## Shared
 
@@ -19,10 +19,11 @@
 | StartLotBuy            | 0.13    | double | Lot for first BUY level (Yetti-aligned)         |
 | MultiplierBuy          | 1.5     | double | Lot multiplier per BUY level                    |
 | GridStepBuy            | 250     | int    | BUY grid distance in POINTS (250 = 25 pips 5-digit) |
-| GeneralTPBuy           | 25      | int    | Overall take profit for BUY basket (pips)       |
+| GeneralTPBuy           | 200     | int    | Overall take profit for BUY basket (pips, Yetti-aligned) |
 | OrdersPerStepBuy       | 2       | int    | Orders per BUY grid level                       |
 | MaxGridLevelBuy        | 20      | int    | Max BUY grid levels                             |
 | StopLossPipsBuy        | 375     | int    | Stop loss distance per BUY order (pips)         |
+| UseStopLossBuy         | true    | bool   | Enable per-order SL for BUY (false = SL 0 ala Yetti) |
 | FixedDistanceBuy       | 10      | int    | BUY trailing distance (pips)                    |
 | TriggerDistanceBuy     | 15      | int    | Min BUY distance before trailing activates      |
 | MinGapPipsBuy          | 3.0     | double | Min MA gap to open a BUY basket (pips)          |
@@ -37,10 +38,11 @@
 | StartLotSell           | 0.13    | double | Lot for first SELL level (Yetti-aligned)        |
 | MultiplierSell         | 1.5     | double | Lot multiplier per SELL level                   |
 | GridStepSell           | 250     | int    | SELL grid distance in POINTS (250 = 25 pips 5-digit) |
-| GeneralTPSell          | 25      | int    | Overall take profit for SELL basket (pips)      |
+| GeneralTPSell          | 200     | int    | Overall take profit for SELL basket (pips, Yetti-aligned) |
 | OrdersPerStepSell      | 2       | int    | Orders per SELL grid level                      |
 | MaxGridLevelSell       | 20      | int    | Max SELL grid levels                            |
 | StopLossPipsSell       | 375     | int    | Stop loss distance per SELL order (pips)        |
+| UseStopLossSell        | true    | bool   | Enable per-order SL for SELL (false = SL 0 ala Yetti) |
 | FixedDistanceSell      | 10      | int    | SELL trailing distance (pips)                   |
 | TriggerDistanceSell    | 15      | int    | Min SELL distance before trailing activates     |
 | MinGapPipsSell         | 3.0     | double | Min MA gap to open a SELL basket (pips)         |
@@ -94,6 +96,14 @@
 | NewsCurrencies    | GBP,USD  | string | Currencies to monitor (comma separated)      |
 | NewsTimezoneOffset| 0        | int    | Timezone offset broker from UTC (e.g. 2, -5) |
 
+## Perubahan v1.14 (exit ala Yetti)
+
+- **`GeneralTPBuy/Sell` = 200 pips** — menyamai parameter UI Yetti (terbaca 200).
+  Mengurangi penutupan prematur; biarkan profit-peak trailing menahan basket seperti Yetti.
+- **`UseStopLossBuy/Sell` (default true)** — toggle SL per order. Saat `false`,
+  semua `OrderSend` memakai SL = 0 (persis Yetti `sl: 0.00000`), termasuk fallback error-130.
+- Exit basket dalam tetap via profit-peak trailing (`CheckTrailing` + `BasketClose`) — sudah sesuai pola Yetti.
+
 ## Perubahan v1.13 (align ke Yetti)
 
 - **Rounding lot**: `NormalizeLot()` kini memakai `MathRound` (bukan `MathFloor`).
@@ -109,7 +119,8 @@
 - Lot level 20 ≈ **432 lot** per order (×2 order = ~864/level) — jauh di atas yang
   pernah tercapai Yetti (level 10, ~7.5 lot). Untuk uji komposisi kecil, turunkan
   `MaxGridLevel` atau `StartLot`.
-- SL 375 pips per order tetap dipasang sebagai proteksi (Yetti tidak memakai SL).
+- SL 375 pips per order tetap dipasang sebagai proteksi (Yetti tidak memakai SL);
+  matikan via `UseStopLossBuy/Sell=false` hanya jika ingin murni ala Yetti.
 
 ## Nota (v1.12)
 
